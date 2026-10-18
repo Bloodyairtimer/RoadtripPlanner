@@ -1,0 +1,13 @@
+services:
+  roadtrip-planner:
+    build: .
+    image: roadtrip-planner:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - trips:/data
+    restart: unless-stopped
+    environment:
+      Data__Directory: /data
+volumes:
+  trips:
