@@ -22,7 +22,7 @@ public sealed class PlannerTests
             using (var factory = new PlannerFactory(directory))
             using (var client = factory.CreateClient())
             {
-                var input = new Trip { Name = "Coastal detour", StartDate = new DateOnly(2027,4,24), Stops = [
+                var input = new Trip { Name = "Coastal detour", StartDate = new DateOnly(2027,4,24), StartLocation = new Place("Home","Ermelo",52.3,5.6), EndLocation = new Place("Home","Ermelo",52.3,5.6), Stops = [
                     new Stop { Name = "Milan", Latitude = 45.46, Longitude = 9.19, Nights = 2 },
                     new Stop { Name = "Nice", Latitude = 43.7, Longitude = 7.27, Nights = 3 }] };
                 var createdResponse = await client.PostAsJsonAsync("/api/trips", input);
@@ -46,6 +46,8 @@ public sealed class PlannerTests
             {
                 var trip = await client.GetFromJsonAsync<Trip>($"/api/trips/{id}");
                 Assert.Equal("Take the scenic road", trip!.Notes);
+                Assert.Equal("Home", trip.StartLocation?.Name);
+                Assert.Equal(52.3, trip.EndLocation?.Latitude);
                 Assert.Equal("Nice", trip.Stops[0].Name);
                 Assert.Single((await client.GetFromJsonAsync<Trip[]>("/api/trips"))!);
                 var copyResponse = await client.PostAsJsonAsync("/api/trips", trip with { Name = "A second trip" });
@@ -112,7 +114,7 @@ public sealed class PlannerTests
         {"elements":[
           {"type":"way","id":1,"center":{"lat":52.01,"lon":5},"tags":{"tourism":"camp_site","name":"Forest camp","website":"javascript:bad()","shower":"yes","power_supply":"yes"}},
           {"type":"node","id":2,"lat":52.001,"lon":5,"tags":{"tourism":"caravan_site","name":"Camper stop","website":"https://example.com"}},
-          {"type":"node","id":3,"lat":52,"lon":5,"tags":{"tourism":"camp_site","name":"Private","access":"private"}},
+          {"type":"node","id":3,"lat":52,"lon":5,"tags":{"tourism":"camp_site","name":"Closed","access":"no"}},
           {"type":"node","id":4,"lat":53,"lon":5,"tags":{"tourism":"camp_site","name":"Too far"}}
         ]}
         """;
@@ -127,7 +129,7 @@ public sealed class PlannerTests
         Assert.Equal("way/1",camps[1].Id);
         await maps.Campsites(52,5,20,CancellationToken.None);
         Assert.Equal(1,handler.Calls);
-        Assert.Contains("camp_site",handler.LastBody);
+        Assert.Contains("camp_site", Uri.UnescapeDataString(handler.LastUri));
     }
 
     [Fact]
@@ -146,7 +148,7 @@ public sealed class PlannerTests
     [Fact]
     public async Task RoutingConvertsGeoJsonIntoMapCoordinates()
     {
-        var handler = new FixtureHandler("""{"code":"Ok","routes":[{"distance":100000,"duration":7200,"geometry":{"coordinates":[[5,52],[7,43]]}}]}""");
+        var handler = new FixtureHandler("""{"code":"Ok","routes":[{"distance":100000,"duration":7200,"geometry":{"coordinates":[[5,52],[6,50],[7,43]]},"legs":[{"distance":100000,"duration":7200,"steps":[{"geometry":{"coordinates":[[5,52],[6,50],[7,43]]}}]}]}]}""");
         using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
         var maps = new MapService(http,Settings(),cache);
         var route = await maps.Route([new(52,5),new(43,7)],CancellationToken.None);
@@ -154,6 +156,11 @@ public sealed class PlannerTests
         Assert.Equal(100,route.DistanceKm);
         Assert.Equal(2,route.DurationHours);
         Assert.Equal(new double[] {52,5},route.Coordinates[0]);
+        var leg = Assert.Single(route.Legs);
+        Assert.Equal(100,leg.DistanceKm);
+        Assert.Equal(2,leg.DurationHours);
+        Assert.InRange(leg.Midpoint.Latitude,43,50);
+        Assert.InRange(leg.Midpoint.Longitude,6,7);
     }
 
     [Fact]
@@ -163,6 +170,107 @@ public sealed class PlannerTests
         Assert.Equal(0,MapService.Distance(52,5,52,5));
         Assert.False(TripValidation.ValidCoordinates(double.NaN,5));
         Assert.Null(MapService.SafeWebsite("javascript:alert(1)"));
+    }
+
+    [Fact]
+    public async Task RejectsInvalidEndpointAndAcceptsLegacyTripWithoutEndpoints()
+    {
+        using var factory = new PlannerFactory(); using var client = factory.CreateClient();
+        var invalid = new Trip { Name = "Invalid home", StartLocation = new Place("Home","",91,5) };
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.PostAsJsonAsync("/api/trips",invalid)).StatusCode);
+        using var content = new StringContent("{\"name\":\"Old trip\",\"stops\":[],\"notes\":\"\"}",System.Text.Encoding.UTF8,"application/json");
+        var response = await client.PostAsync("/api/trips",content);
+        Assert.Equal(HttpStatusCode.Created,response.StatusCode);
+        var trip = await response.Content.ReadFromJsonAsync<Trip>();
+        Assert.Null(trip!.StartLocation);
+        Assert.Null(trip.EndLocation);
+    }
+
+    [Theory]
+    [InlineData(503, "Busy")]
+    [InlineData(200, "{\"remark\":\"runtime error: timeout\",\"elements\":[]}")]
+    [InlineData(200, "<html>Gateway problem</html>")]
+    public async Task CampsiteSearchFallsBackOnBusyIncompleteOrMalformedProvider(int status,string firstBody)
+    {
+        var handler = new ScriptedHandler((_,call) => call == 1
+            ? Reply(firstBody,(HttpStatusCode)status)
+            : Reply("{\"elements\":[{\"type\":\"node\",\"id\":123,\"lat\":52.001,\"lon\":5,\"tags\":{\"tourism\":\"camp_site\",\"name\":\"Available camping\",\"access\":\"private\"}}]}"));
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var config = WithFallback();
+        var maps = new MapService(http,config,cache);
+        var camps = await maps.Campsites(52,5,20,CancellationToken.None);
+        Assert.Equal("Available camping",Assert.Single(camps).Name);
+        Assert.Equal("private",camps[0].Access);
+        Assert.Equal(2,handler.Requests.Count);
+        Assert.Contains("backup.example",handler.Requests[1]);
+        await maps.Campsites(52,5,20,CancellationToken.None);
+        Assert.Equal(2,handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AllOverpassFailuresUseOneBoundedGeocoderSearch()
+    {
+        var handler = new ScriptedHandler((request,_) => request.RequestUri!.Host == "geo.example"
+            ? Reply("[{\"osm_type\":\"way\",\"osm_id\":77,\"type\":\"camp_site\",\"name\":\"Sunny camping\",\"lat\":\"52.01\",\"lon\":\"5.01\",\"extratags\":{\"website\":\"https://example.com\"}},{\"osm_type\":\"node\",\"osm_id\":78,\"type\":\"shop\",\"name\":\"Camping shop\",\"lat\":\"52.0\",\"lon\":\"5.0\"}]")
+            : Reply("Busy",HttpStatusCode.ServiceUnavailable));
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var maps = new MapService(http,WithFallback(),cache);
+        var camp = Assert.Single(await maps.Campsites(52,5,20,CancellationToken.None));
+        Assert.Equal("Sunny camping",camp.Name);
+        Assert.Equal("way/77",camp.Id);
+        Assert.Contains("bounded=1",handler.Requests[^1]);
+        Assert.Contains("viewbox=",handler.Requests[^1]);
+        Assert.Equal(3,handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task FailedSearchIsNotReturnedAsAnEmptyResultOrCached()
+    {
+        var handler = new ScriptedHandler((_,_) => Reply("Unavailable",HttpStatusCode.ServiceUnavailable));
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var settings = WithFallback();settings["Maps:EnableGeocodingCampsiteFallback"] = "false";
+        var maps = new MapService(http,settings,cache);
+        await Assert.ThrowsAsync<CampsiteSearchException>(() => maps.Campsites(52,5,20,CancellationToken.None));
+        await Assert.ThrowsAsync<CampsiteSearchException>(() => maps.Campsites(52,5,20,CancellationToken.None));
+        Assert.Equal(4,handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task RoutingReturnsEveryLegInOrderAndKeepsMidpointsOnRoadGeometry()
+    {
+        var handler = new FixtureHandler("""
+        {"code":"Ok","routes":[{"distance":300000,"duration":10800,"geometry":{"coordinates":[[5,52],[6,53],[7,52],[8,51]]},"legs":[
+          {"distance":200000,"duration":7200,"steps":[{"geometry":{"coordinates":[[5,52],[6,53],[7,52]]}}]},
+          {"distance":100000,"duration":3600,"steps":[{"geometry":{"coordinates":[[7,52],[8,51]]}}]}
+        ]}]}
+        """);
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var route = await new MapService(http,Settings(),cache).Route([new(52,5),new(52,7),new(51,8)],CancellationToken.None);
+        Assert.NotNull(route);
+        Assert.Equal(new double[] {200,100},route.Legs.Select(l => l.DistanceKm));
+        Assert.Equal(new double[] {2,1},route.Legs.Select(l => l.DurationHours));
+        Assert.Equal(53,route.Legs[0].Midpoint.Latitude);
+        Assert.Equal(6,route.Legs[0].Midpoint.Longitude);
+        Assert.Equal(route.DistanceKm,route.Legs.Sum(l => l.DistanceKm));
+        Assert.Contains("steps=true",handler.LastUri);
+    }
+
+    [Fact]
+    public async Task HalfwayStopInterpolatesOnAStraightRoadInsteadOfRepeatingEndpoint()
+    {
+        var handler = new FixtureHandler("""{"code":"Ok","routes":[{"distance":222000,"duration":7200,"geometry":{"coordinates":[[0,0],[2,0]]},"legs":[{"distance":222000,"duration":7200,"steps":[{"geometry":{"coordinates":[[0,0],[2,0]]}}]}]}]}""");
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var route = await new MapService(http,Settings(),cache).Route([new(0,0),new(0,2)],CancellationToken.None);
+        Assert.Equal(1,route!.Legs[0].Midpoint.Longitude,6);
+        Assert.Equal(0,route.Legs[0].Midpoint.Latitude);
+    }
+
+    private static HttpResponseMessage Reply(string json,HttpStatusCode status = HttpStatusCode.OK) => new(status) {
+        Content = new StringContent(json,System.Text.Encoding.UTF8,"application/json")
+    };
+    private static IConfiguration WithFallback()
+    {
+        var settings = Settings();settings["Maps:OverpassFallbackUrls:0"] = "https://backup.example/api";return settings;
     }
 
     private static IConfiguration Settings() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
@@ -196,5 +304,16 @@ internal sealed class FixtureHandler(string json) : HttpMessageHandler
         Calls++; LastUri = request.RequestUri!.AbsoluteUri;
         LastBody = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json,System.Text.Encoding.UTF8,"application/json") };
+    }
+}
+
+internal sealed class ScriptedHandler(Func<HttpRequestMessage,int,HttpResponseMessage> respond) : HttpMessageHandler
+{
+    public List<string> Requests { get; } = [];
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Requests.Add(request.RequestUri!.AbsoluteUri);
+        return Task.FromResult(respond(request,Requests.Count));
     }
 }

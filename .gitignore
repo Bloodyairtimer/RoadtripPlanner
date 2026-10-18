@@ -7,3 +7,5 @@ node_modules/
 .env
 *.user
 .DS_Store
+
+**/test-results/

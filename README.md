@@ -30,11 +30,13 @@ The runtime uses the non-root `app` user. For bind mounts instead of named volum
 ## Planning a trip
 
 - Create as many trips as you need; optionally set a departure date.
-- Search a place by name, then add the correct result. You can also enter coordinates manually.
+- Set **Start from** and **Finish at** above the itinerary. **Return to start** makes a round trip; you can clear or change the endpoints independently of your highlights. Existing trips without endpoints keep working.
+- Search a place by name, then add the correct result as a highlight. You can also enter coordinates manually.
 - Set nights per stop (zero means a day visit). Arrival dates shift automatically as you reorder or change nights.
-- Drag the handle to reorder, or use the up/down buttons. Add stop notes and a trip notebook.
+- Drag the handle to reorder highlights, or use the up/down buttons. Start and finish stay in place. Add stop notes and a trip notebook.
 - Choose **Find campsites** on a stop to search within 10–50 km. Filter campings or camper/caravan sites; save a campsite against that stop.
-- Choose **Calculate driving route** for a road route, distance and driving time. Changing stops invalidates the previous route. These are car estimates between your places, not campsite entrances; always verify camper dimensions, road restrictions, ferries and traffic yourself.
+- Road routes update automatically after changing endpoints or stops. Each leg shows its driving distance in kilometres and estimated driving time; the overview shows the total. Use **Update route** to retry or refresh. These are car estimates between your pinned places, not campsite entrances; always verify camper dimensions, road restrictions, ferries and traffic yourself.
+- Choose **Add a stop** on any leg (or click its route line). Add a halfway point following the road geometry, search for an intermediate place, or click the map. New travel stops start at zero nights; choose a camping or change nights to make an overnight stay. You can start with major highlights and split long drives later.
 - Use **Save changes** (or Ctrl/Cmd+S). The app warns before leaving unsaved work; a version check prevents silently overwriting another tab's edits. On a conflict, export your edits if needed, then reload to get the latest version.
 - Trip settings let you rename, change departure date, duplicate, export or delete a trip. Importing an export creates a separate trip.
 
@@ -54,7 +56,14 @@ dotnet build RoadtripPlanner.slnx -c Release
 dotnet test RoadtripPlanner.slnx -c Release
 ```
 
-The tests cover trip CRUD, multiple trips, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, validation, cross-origin writes, geocoding, campsite filtering/cache and routing. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
+The 23 backend tests cover trip CRUD, multiple trips, endpoint persistence, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, validation, cross-origin writes, geocoding, campsite provider failover/cache, per-leg routing and road midpoints. Eight Node tests cover endpoint order, intermediate stop insertion, route invalidation and duration formatting. Two Playwright browser flows cover planning, campsite selection, persistence, responsive layout and search errors. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, runs the browser flows, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
+
+```bash
+node --test tests/frontend/*.test.mjs
+npm ci --prefix tests/browser
+tests/browser/node_modules/.bin/playwright install chromium
+npm test --prefix tests/browser
+```
 
 ## Storage and backups
 
@@ -75,20 +84,22 @@ Planning and saved trip editing use local data. Search, campsite discovery, rout
 | Feature | Default provider |
 | --- | --- |
 | Place search | [Nominatim](https://nominatim.openstreetmap.org/) |
-| Campsites | [Overpass API](https://overpass-api.de/) / OpenStreetMap `tourism=camp_site` and `tourism=caravan_site` |
+| Campsites | [Overpass API](https://overpass-api.de/) with [Private.coffee](https://overpass.private.coffee/) failover; one bounded Nominatim camping search as a last resort |
 | Driving route | [OSRM public demo server](https://router.project-osrm.org/) |
 | Map tiles | [OpenStreetMap](https://www.openstreetmap.org/) |
 | Map library | Leaflet 1.9.4 bundled locally (license included); system fonts |
 
-Searches send the entered place name to Nominatim, coordinates/radius to Overpass, and route coordinates to OSRM. These are public community services with availability and usage limits. There is no autocomplete: geocoding is submitted explicitly, cached for 24 hours, and serialized with a gap over one second between outbound requests. Campsites/routes are cached in memory for six hours. Restarting clears these caches. Discovery endpoints are additionally limited to 20 requests/minute per application instance. This setup targets a small personal installation, not public hosting or bulk searches.
+Searches send the entered place name to Nominatim, coordinates/radius to Overpass, and route coordinates to OSRM. These are public community services with availability and usage limits. There is no autocomplete: geocoding is submitted explicitly, cached for 24 hours, and serialized with a gap over one second between outbound requests. Campsites/routes are cached in memory for six hours. Restarting clears these caches. Empty Overpass responses are cached for five minutes; the bounded geocoder fallback is cached for 15 minutes. The latter returns a selection of campings rather than every site in the area and shares the geocoder’s one-request-per-second gate. Incomplete or failed provider responses are never presented as a successful empty search. Discovery endpoints are additionally limited to 20 requests/minute per application instance; automatic routing has a separate 60 requests/minute limit. This setup targets a small personal installation, not public hosting or bulk searches.
 
-Campsite listings are not a booking engine: coverage and facilities vary, and no live opening/availability/price check is performed. Private/inaccessible and explicitly disused campsites are excluded when tagged. Distances shown are straight-line distances from the stop. Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under ODbL. Review the [Nominatim policy](https://operations.osmfoundation.org/policies/nominatim/) and [tile policy](https://operations.osmfoundation.org/policies/tiles/) when changing deployment scale.
+Campsite listings are not a booking engine: coverage and facilities vary, and no live opening/availability/price check is performed. Sites explicitly tagged inaccessible, disused or abandoned are excluded. Private-access sites are shown with a warning to verify that visitors are accepted. The camping dialog also offers direct map-search links if the community services are unavailable. Distances shown are straight-line distances from the stop. Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under ODbL. Review the [Nominatim policy](https://operations.osmfoundation.org/policies/nominatim/) and [tile policy](https://operations.osmfoundation.org/policies/tiles/) when changing deployment scale.
 
 Providers are configurable without rebuilding, for example in Compose `environment`:
 
 ```yaml
 Maps__NominatimUrl: https://your-geocoder.example/
 Maps__OverpassUrl: https://your-overpass.example/api/interpreter
+Maps__OverpassFallbackUrls__0: https://your-backup.example/api/interpreter
+Maps__EnableGeocodingCampsiteFallback: "true"
 Maps__RoutingUrl: https://your-osrm.example/
 Maps__UserAgent: RoadtripPlanner/1.0 (+https://your-contact-page.example)
 ```
@@ -98,3 +109,5 @@ URLs must expose the same Nominatim, Overpass or OSRM-compatible API respectivel
 ## Access
 
 Compose binds to `127.0.0.1` by default. This is a trusted local app with **no login**: anyone with access can read/edit/delete trips. For trusted LAN access, change the port binding to `${ROADTRIP_PORT:-8088}:8080`, restrict it with your firewall, and use `http://YOUR-SERVER-IP:8088`. Do not expose it publicly without authentication and HTTPS at a reverse proxy. Cross-origin browser writes are rejected; normal API requests can be made from local scripts. `GET /health` provides a simple liveness check.
+
+The travel emblem in `wwwroot/assets/roam-adventure.png` was generated for this project: campervan, surfboards, palm, sea, mountains and sun on a transparent background.

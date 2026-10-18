@@ -10,6 +10,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("maps", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(35);
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     client.DefaultRequestHeaders.UserAgent.ParseAdd(builder.Configuration["Maps:UserAgent"]!);
 });
 builder.Services.AddSingleton(sp => new MapService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("maps"),
@@ -17,6 +18,7 @@ builder.Services.AddSingleton(sp => new MapService(sp.GetRequiredService<IHttpCl
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddFixedWindowLimiter("routing", o => { o.PermitLimit = 60; o.Window = TimeSpan.FromMinutes(1); o.QueueLimit = 0; });
     options.AddFixedWindowLimiter("discovery", o => { o.PermitLimit = 20; o.Window = TimeSpan.FromMinutes(1); o.QueueLimit = 0; });
 });
 var app = builder.Build();
@@ -35,6 +37,11 @@ app.Use(async (context, next) =>
         }
     }
     try { await next(context); }
+    catch (CampsiteSearchException e)
+    {
+        app.Logger.LogWarning(e, "Campsite providers failed");
+        await Results.Problem("Campsite search could not reach a working map provider. Try again shortly or use the map-search links below.", statusCode: 503).ExecuteAsync(context);
+    }
     catch (TripConflictException)
     {
         await Results.Problem("This trip changed in another tab. Reload it before saving again.", statusCode: 409).ExecuteAsync(context);
@@ -82,10 +89,10 @@ app.MapGet("/api/campsites", async (double latitude, double longitude, int radiu
 }).RequireRateLimiting("discovery");
 app.MapPost("/api/route", async (RouteRequest input, MapService maps, CancellationToken ct) =>
 {
-    if (input.Points is null || input.Points.Count is < 2 or > 100 || input.Points.Any(p => p is null || !TripValidation.ValidCoordinates(p.Latitude, p.Longitude)))
-        return Results.Problem("Provide 2–100 valid route points.", statusCode: 400);
+    if (input.Points is null || input.Points.Count is < 2 or > 102 || input.Points.Any(p => p is null || !TripValidation.ValidCoordinates(p.Latitude, p.Longitude)))
+        return Results.Problem("Provide 2–102 valid route points.", statusCode: 400);
     return await maps.Route(input.Points, ct) is { } route ? Results.Ok(route) : Results.Problem("No driving route found for these stops.", statusCode: 422);
-}).RequireRateLimiting("discovery");
+}).RequireRateLimiting("routing");
 app.Run();
 
 public partial class Program { }

@@ -6,6 +6,8 @@ public sealed record Trip
     public int Version { get; init; }
     public string Name { get; init; } = "";
     public DateOnly? StartDate { get; init; }
+    public Place? StartLocation { get; init; }
+    public Place? EndLocation { get; init; }
     public string Notes { get; init; } = "";
     public List<Stop> Stops { get; init; } = [];
     public DateTimeOffset UpdatedAt { get; init; }
@@ -24,10 +26,11 @@ public sealed record Stop
 
 public sealed record Place(string Name, string Description, double Latitude, double Longitude);
 public sealed record Campsite(string Id, string Name, double Latitude, double Longitude,
-    double DistanceKm, string Type, string? Website, string? Phone, string[] Facilities);
+    double DistanceKm, string Type, string? Website, string? Phone, string[] Facilities, string? Access = null);
 public sealed record RouteRequest(List<RoutePoint> Points);
 public sealed record RoutePoint(double Latitude, double Longitude);
-public sealed record RoadRoute(double DistanceKm, double DurationHours, double[][] Coordinates);
+public sealed record RoadRoute(double DistanceKm, double DurationHours, double[][] Coordinates, RoadLeg[] Legs);
+public sealed record RoadLeg(double DistanceKm, double DurationHours, double[][] Coordinates, RoutePoint Midpoint);
 
 public static class TripValidation
 {
@@ -35,6 +38,10 @@ public static class TripValidation
     {
         if (string.IsNullOrWhiteSpace(trip.Name) || trip.Name.Length > 120)
             return "Give your trip a name of 1–120 characters.";
+        foreach (var endpoint in new[] { trip.StartLocation, trip.EndLocation })
+            if (endpoint is not null && (string.IsNullOrWhiteSpace(endpoint.Name) || endpoint.Name.Length > 200
+                || (endpoint.Description?.Length ?? 0) > 1000 || !ValidCoordinates(endpoint.Latitude, endpoint.Longitude)))
+                return "Start and end locations need a name and valid coordinates.";
         if (trip.Notes is null || trip.Notes.Length > 10000) return "Trip notes can contain up to 10,000 characters.";
         if (trip.Stops is null || trip.Stops.Count > 100) return "A trip can have up to 100 stops.";
         if (trip.Stops.Any(s => s is null)) return "Stops cannot be empty.";
@@ -51,7 +58,7 @@ public static class TripValidation
                 || camp.Id is null || camp.Id.Length > 200 || !double.IsFinite(camp.DistanceKm) || camp.DistanceKm < 0
                 || camp.Type is not ("camp_site" or "caravan_site") || camp.Facilities is null || camp.Facilities.Length > 30
                 || camp.Facilities.Any(f => f is null || f.Length > 100)
-                || (camp.Website?.Length ?? 0) > 2000 || (camp.Phone?.Length ?? 0) > 100))
+                || (camp.Website?.Length ?? 0) > 2000 || (camp.Phone?.Length ?? 0) > 100 || (camp.Access?.Length ?? 0) > 100))
                 return "The selected campsite is invalid.";
         }
         return null;
