@@ -14,13 +14,15 @@ docker compose up --build -d
 
 If using a source ZIP, extract it and run `docker compose up --build -d` from the folder containing `compose.yaml`.
 
-Open **http://localhost:8080**. Trips persist in the `trips` Docker volume across container restarts, rebuilds and `docker compose down`. `docker compose down -v` deletes the volume and your trips.
+Open **http://localhost:8088**. Trips persist in the `trips` Docker volume across container restarts, rebuilds and `docker compose down`. `docker compose down -v` deletes the volume and your trips.
+
+The Docker host port defaults to **8088**; the container listens on **8080**. To choose another host port, set `ROADTRIP_PORT` in your environment or create a `.env` file beside `compose.yaml` containing, for example, `ROADTRIP_PORT=8090`. Apply changes with `docker compose up -d`.
 
 Alternatively, build and run the image directly:
 
 ```bash
 docker build -t roadtrip-planner .
-docker run -d --name roadtrip-planner -p 127.0.0.1:8080:8080 -v roadtrip-data:/data roadtrip-planner
+docker run -d --name roadtrip-planner -p 127.0.0.1:8088:8080 -v roadtrip-data:/data roadtrip-planner
 ```
 
 The runtime uses the non-root `app` user. For bind mounts instead of named volumes, ensure the directory is writable by the image's app user (UID 1654). Run **one instance per data directory**.
@@ -95,4 +97,4 @@ URLs must expose the same Nominatim, Overpass or OSRM-compatible API respectivel
 
 ## Access
 
-Compose binds to `127.0.0.1` by default. This is a trusted local app with **no login**: anyone with access can read/edit/delete trips. For trusted LAN access, change the port binding to `8080:8080`, restrict it with your firewall, and use `http://YOUR-SERVER-IP:8080`. Do not expose it publicly without authentication and HTTPS at a reverse proxy. Cross-origin browser writes are rejected; normal API requests can be made from local scripts. `GET /health` provides a simple liveness check.
+Compose binds to `127.0.0.1` by default. This is a trusted local app with **no login**: anyone with access can read/edit/delete trips. For trusted LAN access, change the port binding to `${ROADTRIP_PORT:-8088}:8080`, restrict it with your firewall, and use `http://YOUR-SERVER-IP:8088`. Do not expose it publicly without authentication and HTTPS at a reverse proxy. Cross-origin browser writes are rejected; normal API requests can be made from local scripts. `GET /health` provides a simple liveness check.

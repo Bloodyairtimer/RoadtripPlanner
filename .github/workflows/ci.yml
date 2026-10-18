@@ -48,18 +48,18 @@ jobs:
         run: |
           set -euo pipefail
           docker volume create test-trips
-          docker run -d --name planner -p 127.0.0.1:8080:8080 -v test-trips:/data roadtrip-planner:test
+          docker run -d --name planner -p 127.0.0.1:8088:8080 -v test-trips:/data roadtrip-planner:test
           trap 'docker logs planner' EXIT
           for i in {1..30}; do
-            if curl --fail --silent http://localhost:8080/health; then break; fi
+            if curl --fail --silent http://localhost:8088/health; then break; fi
             sleep 1
           done
-          curl --fail http://localhost:8080/health
-          curl --fail http://localhost:8080/ | grep -q 'Roadtrip planner'
-          curl --fail -H 'Content-Type: application/json' -d '{"name":"Container smoke test","stops":[],"notes":""}' http://localhost:8080/api/trips
+          curl --fail http://localhost:8088/health
+          curl --fail http://localhost:8088/ | grep -q 'Roadtrip planner'
+          curl --fail -H 'Content-Type: application/json' -d '{"name":"Container smoke test","stops":[],"notes":""}' http://localhost:8088/api/trips
           docker restart planner
           for i in {1..30}; do
-            if curl --fail --silent http://localhost:8080/health; then break; fi
+            if curl --fail --silent http://localhost:8088/health; then break; fi
             sleep 1
           done
-          curl --fail http://localhost:8080/api/trips | grep -q 'Container smoke test'
+          curl --fail http://localhost:8088/api/trips | grep -q 'Container smoke test'
