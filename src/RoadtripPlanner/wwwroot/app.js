@@ -220,18 +220,28 @@ function renderMap(fit = false) {
   $('map').classList.toggle('picking', !!state.mapInsert);
   if (!state.trip) return;
   const nodes = routeNodes(state.trip), points = nodes.map(s => [s.latitude,s.longitude]);
+  const sharedEndpoint = state.trip.startLocation && state.trip.endLocation && state.trip.startLocation.latitude === state.trip.endLocation.latitude && state.trip.startLocation.longitude === state.trip.endLocation.longitude;
   nodes.forEach(s => {
+    if (sharedEndpoint && s.kind === 'start') return;
     const endpoint = s.kind !== 'stop';
-    const marker = L.marker([s.latitude,s.longitude],{icon:L.divIcon({className:`map-stop ${endpoint ? `map-${s.kind}` : ''} ${s.key === state.selected ? 'is-selected' : ''}`,html:endpoint ? (s.kind === 'start' ? 'S' : 'F') : String(s.stopIndex+1),iconSize:[32,32],iconAnchor:[16,16]})}).addTo(stopLayer);
-    marker.bindTooltip(esc(`${endpoint ? s.kind === 'start' ? 'Start: ' : 'Finish: ' : ''}${s.name}`));
+    const marker = L.marker([s.latitude,s.longitude],{icon:L.divIcon({className:`map-stop ${endpoint ? `map-${s.kind}` : ''} ${s.key === state.selected ? 'is-selected' : ''}`,html:endpoint ? (s.kind === 'start' ? 'S' : sharedEndpoint ? 'S/F' : 'F') : String(s.stopIndex+1),iconSize:[32,32],iconAnchor:[16,16]})}).addTo(stopLayer);
+    marker.bindTooltip(esc(`${endpoint ? s.kind === 'start' ? 'Start: ' : sharedEndpoint ? 'Start & finish: ' : 'Finish: ' : ''}${s.name}`));
     marker.on('click', () => { if (state.mapInsert) return; if (endpoint) openPlaceDialog('',{endpoint:s.kind}); else focusStop(s.key); });
     if (s.campsite) addCampMarker(s.campsite,true);
   });
   const route = validRoute();
-  if (route) route.legs.forEach((leg,i) => L.polyline(leg.coordinates,{color:i%2 ? '#007db3' : '#00aeb5',weight:5,opacity:.85}).bindTooltip(`${esc(nodes[i].name)} → ${esc(nodes[i+1].name)} · ${Math.round(leg.distanceKm)} km`).on('click', () => { if (!state.mapInsert) openInsert(i); }).addTo(lineLayer));
+  $('map-finish-legend').hidden = !state.trip.endLocation;
+  $('map-finish-label').textContent = sharedEndpoint ? 'Return to start' : 'To finish';
+  if (route) route.legs.forEach((leg,i) => {
+    const finalLeg = nodes[i+1].kind === 'end';
+    // Dashes preserve the outward route underneath when both legs use the same road.
+    L.polyline(leg.coordinates,{className:`route-leg${finalLeg ? ' route-final' : ''}`,color:finalLeg ? '#d95436' : i%2 ? '#007db3' : '#00aeb5',weight:finalLeg ? 6 : 5,dashArray:finalLeg ? '10,8' : null,opacity:.9})
+      .bindTooltip(`${finalLeg ? sharedEndpoint ? 'Return to start: ' : 'To finish: ' : ''}${esc(nodes[i].name)} → ${esc(nodes[i+1].name)} · ${Math.round(leg.distanceKm)} km`)
+      .on('click', () => { if (!state.mapInsert) openInsert(i); }).addTo(lineLayer);
+  });
   else if (points.length > 1) L.polyline(points,{color:'#00aeb5',weight:3,dashArray:'5,8',opacity:.55}).addTo(lineLayer);
   for (const camp of state.camps) addCampMarker(camp,false);
-  if (fit && points.length) { map.invalidateSize(); map.fitBounds(points,{padding:[45,45],maxZoom:11}); }
+  if (fit && points.length) { map.invalidateSize(); map.fitBounds(route?.coordinates.length ? [...points,...route.coordinates] : points,{padding:[45,45],maxZoom:11}); }
 }
 function addCampMarker(camp, selected) {
   L.marker([camp.latitude,camp.longitude],{icon:L.divIcon({className:'map-camp',iconSize:[14,14],iconAnchor:[7,7]})})

@@ -143,3 +143,32 @@ test('trip dates can be created, edited, validated and cleared',async ({page}) =
   await expect(page.locator('#trip-date')).toHaveValue('');
   await expect(page.locator('#trip-end-date')).toHaveValue('');
 });
+
+
+test('round trip draws and counts the return leg to the shared start and finish',async ({page}) => {
+  await fixtures(page); await newTrip(page);
+  const requests=[];
+  await page.route('**/api/route',r => {
+    const {points}=r.request().postDataJSON(); requests.push(points);
+    const legs=points.slice(1).map((p,i) => ({distanceKm:i===points.length-2 ? 175 : 100,durationHours:2,coordinates:[[points[i].latitude,points[i].longitude],[p.latitude,p.longitude]],midpoint:p}));
+    return r.fulfill({json:{distanceKm:legs.reduce((sum,l)=>sum+l.distanceKm,0),durationHours:2*legs.length,coordinates:points.map(p=>[p.latitude,p.longitude]),legs}});
+  });
+  await page.locator('#set-start').click(); await choosePlace(page,'Ermelo');
+  await page.locator('#add-place').click(); await choosePlace(page,'Nice');
+  await expect(page.locator('#summary-distance')).toHaveText('175 km');
+  await page.locator('#return-home').click();
+  await expect(page.locator('#summary-distance')).toHaveText('275 km');
+  expect(requests.at(-1)).toEqual([places.Ermelo,places.Nice,places.Ermelo].map(({latitude,longitude})=>({latitude,longitude})));
+  await expect(page.locator('#map .route-leg')).toHaveCount(2);
+  await expect(page.locator('#map .route-final')).toHaveAttribute('stroke-dasharray','10,8');
+  await expect(page.locator('#map .map-end')).toHaveText('S/F');
+  await expect(page.locator('#map-finish-label')).toHaveText('Return to start');
+  await expect(page.locator('.drive-leg').last()).toContainText('175 km');
+  await expect(page.locator('.drive-leg').last()).toContainText('Nice → Ermelo');
+  await page.locator('#save-trip').click(); await expect(page.locator('#save-state')).toHaveText('All changes saved');
+  await page.reload();
+  await expect(page.locator('#summary-distance')).toHaveText('275 km');
+  await expect(page.locator('#map .route-final')).toHaveCount(1);
+  await page.locator('#map .route-final').dispatchEvent('click');
+  await expect(page.locator('#insert-description')).toContainText('Nice → Ermelo · 175 km');
+});
