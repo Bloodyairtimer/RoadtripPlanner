@@ -31,6 +31,7 @@ async function newTrip(page) {
   await page.locator('#new-trip').click();
   await page.locator('#trip-name').fill(`Summer coast ${Date.now()}`);
   await page.locator('#trip-date').fill('2027-04-24');
+  await page.locator('#trip-end-date').fill('2027-05-08');
   await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
   await expect(page.locator('#workspace')).toBeVisible();
 }
@@ -112,4 +113,33 @@ test('Park4Night sources, ratings, overnight filters and saved choice',async ({p
   await page.locator('[data-close="camp-dialog"]').click();
   await page.locator('#save-trip').click();await expect(page.locator('#save-state')).toHaveText('All changes saved');
   await page.reload();await expect(page.locator('.selected-camp')).toContainText('Sunny Park4Night Camping');
+});
+
+
+test('trip dates can be created, edited, validated and cleared',async ({page}) => {
+  await fixtures(page); await newTrip(page);
+  await page.locator('#trip-settings').click();
+  await expect(page.locator('#trip-date')).toHaveValue('2027-04-24');
+  await page.locator('#trip-end-date').fill('2027-04-23');
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect(page.locator('#trip-dialog')).toBeVisible();
+  expect(await page.locator('#trip-end-date').evaluate(el => el.validity.valid)).toBe(false);
+  await page.locator('#trip-end-date').fill('2027-05-08');
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect(page.locator('#trip-dialog')).toBeHidden();
+  await expect(page.locator('#summary-end')).toContainText('2027');
+  await page.reload();
+  await page.locator('#trip-settings').click();
+  await expect(page.locator('#trip-date')).toHaveValue('2027-04-24');
+  await expect(page.locator('#trip-end-date')).toHaveValue('2027-05-08');
+  await page.locator('#trip-date').fill('2027-05-08');
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect(page.locator('#trip-dialog')).toBeHidden();
+  await page.locator('#trip-settings').click();
+  await page.locator('#trip-date').fill(''); await page.locator('#trip-end-date').fill('');
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect(page.locator('#summary-date')).toHaveText('Start date to be decided');
+  await page.reload(); await page.locator('#trip-settings').click();
+  await expect(page.locator('#trip-date')).toHaveValue('');
+  await expect(page.locator('#trip-end-date')).toHaveValue('');
 });

@@ -22,7 +22,7 @@ public sealed class PlannerTests
             using (var factory = new PlannerFactory(directory))
             using (var client = factory.CreateClient())
             {
-                var input = new Trip { Name = "Coastal detour", StartDate = new DateOnly(2027,4,24), StartLocation = new Place("Home","Ermelo",52.3,5.6), EndLocation = new Place("Home","Ermelo",52.3,5.6), Stops = [
+                var input = new Trip { Name = "Coastal detour", StartDate = new DateOnly(2027,4,24), EndDate = new DateOnly(2027,5,8), StartLocation = new Place("Home","Ermelo",52.3,5.6), EndLocation = new Place("Home","Ermelo",52.3,5.6), Stops = [
                     new Stop { Name = "Milan", Latitude = 45.46, Longitude = 9.19, Nights = 2 },
                     new Stop { Name = "Nice", Latitude = 43.7, Longitude = 7.27, Nights = 3 }] };
                 var createdResponse = await client.PostAsJsonAsync("/api/trips", input);
@@ -30,7 +30,7 @@ public sealed class PlannerTests
                 var created = (await createdResponse.Content.ReadFromJsonAsync<Trip>())!;
                 id = created.Id;
                 var camp = new Campsite("node/123", "Coastal camping", 43.71, 7.28, 1.4, "camp_site", "https://example.com/", null, ["Showers"]);
-                var update = created with { Notes = "Take the scenic road", Stops = [created.Stops[1] with { Nights = 4, Campsite = camp },created.Stops[0]] };
+                var update = created with { Notes = "Take the scenic road", EndDate = new DateOnly(2027,5,9), Stops = [created.Stops[1] with { Nights = 4, Campsite = camp },created.Stops[0]] };
                 var savedResponse = await client.PutAsJsonAsync($"/api/trips/{id}", update);
                 Assert.Equal(HttpStatusCode.OK, savedResponse.StatusCode);
                 var saved = (await savedResponse.Content.ReadFromJsonAsync<Trip>())!;
@@ -46,6 +46,8 @@ public sealed class PlannerTests
             {
                 var trip = await client.GetFromJsonAsync<Trip>($"/api/trips/{id}");
                 Assert.Equal("Take the scenic road", trip!.Notes);
+                Assert.Equal(new DateOnly(2027,4,24), trip.StartDate);
+                Assert.Equal(new DateOnly(2027,5,9), trip.EndDate);
                 Assert.Equal("Home", trip.StartLocation?.Name);
                 Assert.Equal(52.3, trip.EndLocation?.Latitude);
                 Assert.Equal("Nice", trip.Stops[0].Name);
@@ -60,6 +62,25 @@ public sealed class PlannerTests
             }
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public async Task TripDatesAreOptionalAllowSameDayAndRejectReversedRanges()
+    {
+        using var factory = new PlannerFactory(); using var client = factory.CreateClient();
+        // Older exports without an end date remain importable.
+        var legacy = await client.PostAsync("/api/trips", new StringContent(
+            """{"name":"Legacy trip","startDate":"2027-04-24"}""", System.Text.Encoding.UTF8, "application/json"));
+        var created = (await legacy.Content.ReadFromJsonAsync<Trip>())!;
+        Assert.Equal(HttpStatusCode.Created, legacy.StatusCode);
+        Assert.Null(created.EndDate);
+        var day = new DateOnly(2027,4,24);
+        foreach (var dates in new[] { (Start: (DateOnly?)null, End: (DateOnly?)null), (Start: (DateOnly?)null, End: (DateOnly?)day), (Start: (DateOnly?)day, End: (DateOnly?)day) })
+            Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/trips", new Trip { Name = "Flexible trip", StartDate = dates.Start, EndDate = dates.End })).StatusCode);
+        var invalid = created with { EndDate = day.AddDays(-1) };
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/trips", invalid)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync($"/api/trips/{created.Id}", invalid)).StatusCode);
+        Assert.Null((await client.GetFromJsonAsync<Trip>($"/api/trips/{created.Id}"))!.EndDate);
     }
 
     [Theory]

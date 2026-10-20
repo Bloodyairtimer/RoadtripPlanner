@@ -72,8 +72,8 @@ function renderSummary() {
   if (!state.trip) return;
   const t = state.trip, nights = t.stops.reduce((n,s) => n + Number(s.nights || 0), 0), count = routeNodes(t).length, route = validRoute();
   $('summary-stops').textContent = t.stops.length; $('summary-nights').textContent = nights;
-  $('summary-date').textContent = t.startDate ? dateLabel(dateAt(t.startDate, 0)) : 'No date set';
-  $('summary-end').textContent = t.startDate ? `Until ${dateLabel(dateAt(t.startDate, nights))}` : "Go whenever you're ready";
+  $('summary-date').textContent = t.startDate ? dateLabel(dateAt(t.startDate, 0)) : 'Start date to be decided';
+  $('summary-end').textContent = t.endDate ? `Until ${dateLabel(dateAt(t.endDate, 0))}` : t.startDate ? `Estimated finish ${dateLabel(dateAt(t.startDate, nights))}` : "Go whenever you're ready";
   $('calculate-route').disabled = count < 2 || state.routing;
   $('calculate-route').textContent = state.routing ? 'Routing…' : 'Update route';
   $('summary-distance').textContent = route ? `${Math.round(route.distanceKm).toLocaleString()} km` : state.routing ? 'Calculating…' : count < 2 ? 'Your route awaits' : state.routeError ? 'Route unavailable' : 'Ready to route';
@@ -201,6 +201,8 @@ function openTripDialog(edit = false) {
   $('trip-form').dataset.mode = edit ? 'edit' : 'new';
   $('trip-dialog-title').textContent = edit ? 'Your trip, your way' : 'A new adventure';
   $('trip-name').value = edit ? state.trip.name : ''; $('trip-date').value = edit ? state.trip.startDate ?? '' : '';
+  $('trip-end-date').value = edit ? state.trip.endDate ?? '' : '';
+  syncTripDates();
   for (const id of ['delete-trip','duplicate-trip','export-trip']) $(id).hidden = !edit;
   $('trip-dialog').showModal();
 }
@@ -324,15 +326,22 @@ $('insert-search').addEventListener('click', () => { const index = insertionInde
 $('insert-map').addEventListener('click', () => { state.mapInsert = {index:insertionIndex(state.trip,state.insertLeg)}; $('insert-dialog').close(); renderMap(); $('map').scrollIntoView({behavior:'smooth',block:'center'}); });
 $('cancel-map-pick').addEventListener('click', () => { state.mapInsert = null; renderMap(); });
 $('export-trip').addEventListener('click', exportTrip);
+function syncTripDates() {
+  $('trip-end-date').min = $('trip-date').value;
+  $('trip-end-date').setCustomValidity($('trip-date').value && $('trip-end-date').value && $('trip-end-date').value < $('trip-date').value ? 'End date must be on or after the start date.' : '');
+}
+for (const id of ['trip-date','trip-end-date']) $(id).addEventListener('input', syncTripDates);
 $('trip-form').addEventListener('submit', async e => {
   e.preventDefault();
+  syncTripDates();
+  if (!$('trip-form').reportValidity()) return;
   if ($('trip-form').dataset.mode === 'edit') {
-    state.trip.name = $('trip-name').value.trim(); state.trip.startDate = $('trip-date').value || null;
+    state.trip.name = $('trip-name').value.trim(); state.trip.startDate = $('trip-date').value || null; state.trip.endDate = $('trip-end-date').value || null;
     dirty(); render(); $('trip-dialog').close(); await saveTrip();
   } else {
     if (!canLeave()) return;
     await busy(async () => {
-      const trip = await api('/api/trips',{method:'POST',body:JSON.stringify({name:$('trip-name').value.trim(),startDate:$('trip-date').value || null,notes:'',stops:[]})});
+      const trip = await api('/api/trips',{method:'POST',body:JSON.stringify({name:$('trip-name').value.trim(),startDate:$('trip-date').value || null,endDate:$('trip-end-date').value || null,notes:'',stops:[]})});
       state.trips.unshift(trip); setTrip(trip); $('trip-dialog').close(); notify('A new adventure, ready to plan.');
     });
   }

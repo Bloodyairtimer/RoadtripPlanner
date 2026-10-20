@@ -29,7 +29,7 @@ The runtime uses the non-root `app` user. For bind mounts instead of named volum
 
 ## Planning a trip
 
-- Create as many trips as you need; optionally set a departure date.
+- Create as many trips as you need; optionally set start and end dates. The overview shows your chosen travel window; with only a start date, it estimates the finish from planned nights.
 - Set **Start from** and **Finish at** above the itinerary. **Return to start** makes a round trip; you can clear or change the endpoints independently of your highlights. Existing trips without endpoints keep working.
 - Search a place by name, then add the correct result as a highlight. You can also enter coordinates manually.
 - Set nights per stop (zero means a day visit). Arrival dates shift automatically as you reorder or change nights.
@@ -38,7 +38,7 @@ The runtime uses the non-root `app` user. For bind mounts instead of named volum
 - Road routes update automatically after changing endpoints or stops. Each leg shows its driving distance in kilometres and estimated driving time; the overview shows the total. Use **Update route** to retry or refresh. These are car estimates between your pinned places, not campsite entrances; always verify camper dimensions, road restrictions, ferries and traffic yourself.
 - Choose **Add a stop** on any leg (or click its route line). Add a halfway point following the road geometry, search for an intermediate place, or click the map. New travel stops start at zero nights; choose a camping or change nights to make an overnight stay. You can start with major highlights and split long drives later.
 - Use **Save changes** (or Ctrl/Cmd+S). The app warns before leaving unsaved work; a version check prevents silently overwriting another tab's edits. On a conflict, export your edits if needed, then reload to get the latest version.
-- Trip settings let you rename, change departure date, duplicate, export or delete a trip. Importing an export creates a separate trip.
+- Trip settings let you rename, change start/end dates, duplicate, export or delete a trip. Importing an export creates a separate trip.
 
 ## Local development
 
@@ -56,7 +56,7 @@ dotnet build RoadtripPlanner.slnx -c Release
 dotnet test RoadtripPlanner.slnx -c Release
 ```
 
-The 36 backend tests cover trip CRUD, multiple trips, endpoint persistence, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, validation, cross-origin writes, geocoding, campsite provider failover/cache, Park4Night parsing/category filtering/radius handling, conservative duplicate merging, metadata persistence, per-leg routing and road midpoints. Ten Node tests cover endpoint order, intermediate stop insertion, route invalidation and duration formatting. Three Playwright browser flows cover planning, campsite selection, persistence, responsive layout, search errors, source filters, and saved Park4Night selections. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, runs the browser flows, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
+The 37 backend tests cover trip CRUD, multiple trips, endpoint persistence, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, optional date persistence and date range validation, cross-origin writes, geocoding, campsite provider failover/cache, Park4Night parsing/category filtering/radius handling, conservative duplicate merging, metadata persistence, per-leg routing and road midpoints. Ten Node tests cover endpoint order, intermediate stop insertion, route invalidation and duration formatting. Four Playwright browser flows cover planning, campsite selection, persistence, responsive layout, search errors, source filters, and saved Park4Night selections. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, runs the browser flows, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
 
 ```bash
 node --test tests/frontend/*.test.mjs

@@ -6,6 +6,7 @@ public sealed record Trip
     public int Version { get; init; }
     public string Name { get; init; } = "";
     public DateOnly? StartDate { get; init; }
+    public DateOnly? EndDate { get; init; }
     public Place? StartLocation { get; init; }
     public Place? EndLocation { get; init; }
     public string Notes { get; init; } = "";
@@ -42,6 +43,8 @@ public static class TripValidation
     {
         if (string.IsNullOrWhiteSpace(trip.Name) || trip.Name.Length > 120)
             return "Give your trip a name of 1–120 characters.";
+        if (trip.StartDate.HasValue && trip.EndDate.HasValue && trip.EndDate < trip.StartDate)
+            return "End date must be on or after the start date.";
         foreach (var endpoint in new[] { trip.StartLocation, trip.EndLocation })
             if (endpoint is not null && (string.IsNullOrWhiteSpace(endpoint.Name) || endpoint.Name.Length > 200
                 || (endpoint.Description?.Length ?? 0) > 1000 || !ValidCoordinates(endpoint.Latitude, endpoint.Longitude)))
