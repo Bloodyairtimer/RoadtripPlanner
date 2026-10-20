@@ -190,6 +190,7 @@ public sealed class PlannerTests
     [InlineData(503, "Busy")]
     [InlineData(200, "{\"remark\":\"runtime error: timeout\",\"elements\":[]}")]
     [InlineData(200, "<html>Gateway problem</html>")]
+    [InlineData(200, "[]")]
     public async Task CampsiteSearchFallsBackOnBusyIncompleteOrMalformedProvider(int status,string firstBody)
     {
         var handler = new ScriptedHandler((_,call) => call == 1

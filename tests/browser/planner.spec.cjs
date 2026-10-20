@@ -9,9 +9,9 @@ async function fixtures(page) {
   let routeCalls = 0;
   await page.route('https://tile.openstreetmap.org/**',r => r.abort());
   await page.route('**/api/places?*',r => r.fulfill({json:[places[new URL(r.request().url()).searchParams.get('q')]].filter(Boolean)}));
-  await page.route('**/api/campsites?*',r => {
+  await page.route('**/api/campsites/search?*',r => {
     const q=new URL(r.request().url()).searchParams;
-    return r.fulfill({json:[{id:'way/123',name:'Sunny Coast Camping',latitude:Number(q.get('latitude'))+.01,longitude:Number(q.get('longitude'))+.01,distanceKm:1.4,type:'camp_site',website:'https://example.com',phone:null,facilities:['Showers','Water'],access:'customers'}]});
+    return r.fulfill({json:{campsites:[{id:'way/123',name:'Sunny Coast Camping',latitude:Number(q.get('latitude'))+.01,longitude:Number(q.get('longitude'))+.01,distanceKm:1.4,type:'camp_site',website:'https://example.com',phone:null,facilities:['Showers','Water'],access:'customers'}],warnings:[]}});
   });
   await page.route('**/api/route',r => {
     routeCalls++;
@@ -82,11 +82,34 @@ test('plan endpoints, insert stops, select camping, save and reload',async ({pag
 test('campsite errors stay distinct from an empty successful search',async ({page}) => {
   await fixtures(page);await newTrip(page);
   await page.locator('#add-place').click();await choosePlace(page,'Nice');
-  await page.route('**/api/campsites?*',r => r.fulfill({status:503,json:{detail:'Campsite providers are busy. Try again.'}}));
+  await page.route('**/api/campsites/search?*',r => r.fulfill({status:503,json:{detail:'Campsite providers are busy. Try again.'}}));
   await page.locator('.camp-button').click();
   await expect(page.locator('#camp-results')).toContainText('Campsite providers are busy');
   await expect(page.locator('#camp-search-links').getByRole('link',{name:'Google Maps'})).toBeVisible();
-  await page.route('**/api/campsites?*',r => r.fulfill({json:[]}));
+  await page.route('**/api/campsites/search?*',r => r.fulfill({json:{campsites:[],warnings:[]}}));
   await page.locator('#camp-form').getByRole('button',{name:'Find campsites'}).click();
   await expect(page.locator('#camp-results')).toContainText('No campsites found');
+});
+
+test('Park4Night sources, ratings, overnight filters and saved choice',async ({page}) => {
+  await fixtures(page);await newTrip(page);
+  await page.locator('#add-place').click();await choosePlace(page,'Nice');
+  const camp = {id:'park4night/55',name:'Sunny Park4Night Camping',latitude:43.7,longitude:7.27,distanceKm:1,type:'camp_site',website:null,phone:null,facilities:['Showers'],source:'Park4Night',sourceUrl:'https://park4night.com/en/place/55',rating:4.5,reviewCount:12,otherSources:[{name:'OpenStreetMap',url:'https://www.openstreetmap.org/way/123'}]};
+  await page.route('**/api/campsites/search?*',r => r.fulfill({json:{campsites:[camp,{...camp,id:'park4night/56',name:'Coast parking',type:'overnight_parking',category:'Parking day/night',sourceUrl:'https://park4night.com/en/place/56',otherSources:[]}],warnings:['One provider is busy; available results are shown.']}}));
+  await page.locator('.camp-button').click();
+  await expect(page.locator('.camp-card')).toHaveCount(1);
+  await expect(page.locator('.camp-rating')).toHaveText('★ 4.5/5 · 12 reviews');
+  await expect(page.locator('.provider-warning')).toContainText('One provider is busy');
+  await expect(page.locator('.camp-card').getByRole('link',{name:'Park4Night'})).toHaveAttribute('href','https://park4night.com/en/place/55');
+  await expect(page.locator('.camp-card').getByRole('link',{name:'OpenStreetMap'})).toHaveAttribute('href','https://www.openstreetmap.org/way/123');
+  await page.locator('#camp-type').selectOption('other');await expect(page.locator('.camp-card h3')).toHaveText('Coast parking');
+  await page.locator('#camp-type').selectOption('any');await expect(page.locator('.camp-card')).toHaveCount(2);
+  await page.locator('#camp-source').selectOption('OpenStreetMap');await expect(page.locator('.camp-card')).toHaveCount(1);
+  await page.locator('#camp-source').selectOption('Park4Night');await expect(page.locator('.camp-card')).toHaveCount(2);
+  await page.locator('#camp-type').selectOption('camp_site');
+  await page.screenshot({path:'../../TestResults/park4night-search.png',fullPage:true});
+  await page.getByRole('button',{name:'Stay here',exact:true}).click();
+  await page.locator('[data-close="camp-dialog"]').click();
+  await page.locator('#save-trip').click();await expect(page.locator('#save-state')).toHaveText('All changes saved');
+  await page.reload();await expect(page.locator('.selected-camp')).toContainText('Sunny Park4Night Camping');
 });

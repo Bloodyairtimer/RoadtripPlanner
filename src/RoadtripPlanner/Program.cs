@@ -15,6 +15,15 @@ builder.Services.AddHttpClient("maps", client =>
 });
 builder.Services.AddSingleton(sp => new MapService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("maps"),
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>()));
+builder.Services.AddHttpClient("park4night", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(builder.Configuration["Maps:UserAgent"]!);
+});
+builder.Services.AddSingleton(sp => new Park4NightService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("park4night"),
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>()));
+builder.Services.AddSingleton<CampsiteSearchService>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -40,7 +49,7 @@ app.Use(async (context, next) =>
     catch (CampsiteSearchException e)
     {
         app.Logger.LogWarning(e, "Campsite providers failed");
-        await Results.Problem("Campsite search could not reach a working map provider. Try again shortly or use the map-search links below.", statusCode: 503).ExecuteAsync(context);
+        await Results.Problem("Campsite search could not reach any available provider. Try again shortly or use the map-search links below.", statusCode: 503).ExecuteAsync(context);
     }
     catch (TripConflictException)
     {
@@ -82,10 +91,15 @@ app.MapGet("/api/places", async (string q, MapService maps, CancellationToken ct
     if (string.IsNullOrWhiteSpace(q) || q.Trim().Length is < 2 or > 200) return Results.Problem("Enter a place with 2–200 characters.", statusCode: 400);
     return Results.Ok(await maps.Search(q.Trim(), ct));
 }).RequireRateLimiting("discovery");
-app.MapGet("/api/campsites", async (double latitude, double longitude, int radiusKm, MapService maps, CancellationToken ct) =>
+app.MapGet("/api/campsites", async (double latitude, double longitude, int radiusKm, CampsiteSearchService search, CancellationToken ct) =>
 {
     if (!TripValidation.ValidCoordinates(latitude, longitude) || radiusKm is < 1 or > 50) return Results.Problem("Use valid coordinates and a radius between 1 and 50 km.", statusCode: 400);
-    return Results.Ok(await maps.Campsites(latitude, longitude, radiusKm, ct));
+    return Results.Ok((await search.Search(latitude, longitude, radiusKm, ct)).Campsites);
+}).RequireRateLimiting("discovery");
+app.MapGet("/api/campsites/search", async (double latitude, double longitude, int radiusKm, CampsiteSearchService search, CancellationToken ct) =>
+{
+    if (!TripValidation.ValidCoordinates(latitude, longitude) || radiusKm is < 1 or > 50) return Results.Problem("Use valid coordinates and a radius between 1 and 50 km.", statusCode: 400);
+    return Results.Ok(await search.Search(latitude,longitude,radiusKm,ct));
 }).RequireRateLimiting("discovery");
 app.MapPost("/api/route", async (RouteRequest input, MapService maps, CancellationToken ct) =>
 {

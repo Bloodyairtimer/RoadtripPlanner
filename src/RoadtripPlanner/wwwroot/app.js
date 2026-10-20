@@ -1,6 +1,6 @@
-import {routeNodes, routeSignature, insertionIndex, formatDriving} from './planner.mjs';
+import {routeNodes, routeSignature, insertionIndex, formatDriving, campsiteSources, campsiteType, matchesCampsite} from './planner.mjs';
 const $ = id => document.getElementById(id);
-const state = { trips: [], trip: null, selected: null, dirty: false, busy: false, camps: [], campStop: null, route: null, routeKey: null, routing: false, routeError: null, placeTarget: null, insertLeg: null, mapInsert: null };
+const state = { trips: [], trip: null, selected: null, dirty: false, busy: false, camps: [], campStop: null, route: null, routeKey: null, routing: false, routeError: null, campWarnings: [], campError: null, campLoading: false, placeTarget: null, insertLeg: null, mapInsert: null };
 let map, stopLayer, campLayer, lineLayer, toastTimer, dragId, placeRequest = 0, campRequest = 0, routeTimer, routeRequest = 0, routeController, queuedRouteKey;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone = value => structuredClone(value);
@@ -99,7 +99,7 @@ function renderStops() {
     const arrival = state.trip.startDate ? dateAt(state.trip.startDate, days) : null;
     days += s.nights;
     const nodeIndex = nodes.findIndex(n => n.key === s.id);
-    return (nodeIndex > 0 ? legMarkup(nodeIndex-1) : '') + `<article class="stop-card ${s.id === state.selected ? 'selected' : ''}" data-stop="${s.id}"><span class="stop-number">${i+1}</span><div class="stop-top"><div><h3 tabindex="0" data-focus-stop="${s.id}">${esc(s.name)}</h3><div class="stop-date">${arrival ? esc(dateLabel(arrival)) : 'Date to be decided'} · ${s.nights === 0 ? 'Day visit' : `${s.nights} night${s.nights === 1 ? '' : 's'}`}</div></div><div class="reorder"><span class="drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span><button data-action="edit" aria-label="Change ${esc(s.name)} location" title="Change location">✎</button><button data-action="up" aria-label="Move ${esc(s.name)} earlier" ${i === 0 ? 'disabled' : ''}>↑</button><button data-action="down" aria-label="Move ${esc(s.name)} later" ${i === state.trip.stops.length-1 ? 'disabled' : ''}>↓</button><button data-action="remove" aria-label="Remove ${esc(s.name)}">×</button></div></div><div class="stop-fields"><label class="nights-control" style="margin:0">☾ <input type="number" min="0" max="365" value="${s.nights}" data-field="nights" aria-label="Nights in ${esc(s.name)}"> nights</label><button class="camp-button" data-action="camp">♧ ${s.campsite ? 'Change campsite' : 'Find campsites'}</button></div>${s.campsite ? `<div class="selected-camp"><div><strong>♧ ${esc(s.campsite.name)}</strong><small>${s.campsite.distanceKm} km from stop · ${s.campsite.type === 'camp_site' ? 'Camping' : 'Camper / caravan site'}</small></div><button data-action="clear-camp" aria-label="Remove campsite">×</button></div>` : ''}<textarea class="stop-notes" rows="1" maxlength="5000" data-field="notes" aria-label="Notes for ${esc(s.name)}" placeholder="A little note for this stop…">${esc(s.notes)}</textarea></article>`;
+    return (nodeIndex > 0 ? legMarkup(nodeIndex-1) : '') + `<article class="stop-card ${s.id === state.selected ? 'selected' : ''}" data-stop="${s.id}"><span class="stop-number">${i+1}</span><div class="stop-top"><div><h3 tabindex="0" data-focus-stop="${s.id}">${esc(s.name)}</h3><div class="stop-date">${arrival ? esc(dateLabel(arrival)) : 'Date to be decided'} · ${s.nights === 0 ? 'Day visit' : `${s.nights} night${s.nights === 1 ? '' : 's'}`}</div></div><div class="reorder"><span class="drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder">⠿</span><button data-action="edit" aria-label="Change ${esc(s.name)} location" title="Change location">✎</button><button data-action="up" aria-label="Move ${esc(s.name)} earlier" ${i === 0 ? 'disabled' : ''}>↑</button><button data-action="down" aria-label="Move ${esc(s.name)} later" ${i === state.trip.stops.length-1 ? 'disabled' : ''}>↓</button><button data-action="remove" aria-label="Remove ${esc(s.name)}">×</button></div></div><div class="stop-fields"><label class="nights-control" style="margin:0">☾ <input type="number" min="0" max="365" value="${s.nights}" data-field="nights" aria-label="Nights in ${esc(s.name)}"> nights</label><button class="camp-button" data-action="camp">♧ ${s.campsite ? 'Change campsite' : 'Find campsites'}</button></div>${s.campsite ? `<div class="selected-camp"><div><strong>♧ ${esc(s.campsite.name)}</strong><small>${s.campsite.distanceKm} km from stop · ${esc(campsiteType(s.campsite))}</small></div><button data-action="clear-camp" aria-label="Remove campsite">×</button></div>` : ''}<textarea class="stop-notes" rows="1" maxlength="5000" data-field="notes" aria-label="Notes for ${esc(s.name)}" placeholder="A little note for this stop…">${esc(s.notes)}</textarea></article>`;
   }).join('');
   if (state.trip.endLocation) {
     if (nodes.length > 1) html += legMarkup(nodes.length-2);
@@ -236,32 +236,43 @@ function addCampMarker(camp, selected) {
     .bindPopup(`<strong>${esc(camp.name)}</strong><br>${selected ? 'Saved campsite' : `${camp.distanceKm} km from stop`}`).addTo(campLayer);
 }
 async function openCampsites(id) {
-  state.selected = id; state.campStop = id; state.camps = []; renderStops(); renderMap();
+  state.selected = id; state.campStop = id; state.camps = []; state.campWarnings = []; renderStops(); renderMap();
   const stop = state.trip.stops.find(s => s.id === id);
   $('camp-title').textContent = `Campings near ${stop.name}`; $('camp-name-filter').value = '';
   $('camp-search-links').innerHTML = `<span>Also explore:</span><a href="https://www.google.com/maps/search/camping+near+${stop.latitude},${stop.longitude}" target="_blank" rel="noopener noreferrer">Google Maps ↗</a><a href="https://www.openstreetmap.org/#map=11/${stop.latitude}/${stop.longitude}" target="_blank" rel="noopener noreferrer">OpenStreetMap ↗</a>`;
   $('camp-dialog').showModal();
   await findCampsites();
 }
+function lockCampSearch(locked) {
+  state.campLoading = locked;
+  $('camp-form').querySelector('button').disabled = locked;
+  for (const id of ['camp-radius','camp-type','camp-source','camp-name-filter']) $(id).disabled = locked;
+}
 async function findCampsites() {
   const stop = state.trip.stops.find(s => s.id === state.campStop); if (!stop) return;
-  state.camps = []; renderMap();
+  state.camps = []; state.campWarnings = []; state.campError = null; renderMap();
   const token = ++campRequest, radius = Number($('camp-radius').value);
-  $('camp-results').innerHTML = '<div class="status-message">Searching nearby campings… If a provider is busy, we try an alternative. This can take up to a minute.</div>';
-  $('camp-form').querySelector('button').disabled = true;
+  $('camp-results').innerHTML = '<div class="status-message">Searching OpenStreetMap and Park4Night… Busy providers may take up to a minute.</div>';
+  lockCampSearch(true);
   try {
-    const camps = await api(`/api/campsites?latitude=${stop.latitude}&longitude=${stop.longitude}&radiusKm=${radius}`);
+    const result = await api(`/api/campsites/search?latitude=${stop.latitude}&longitude=${stop.longitude}&radiusKm=${radius}`);
     if (token !== campRequest || !state.trip.stops.some(s => s.id === stop.id)) return;
-    state.camps = camps; renderCampsites(); renderMap();
-  } catch (e) { if (token === campRequest) $('camp-results').innerHTML = `<div class="status-message error">${esc(e.message)}</div>`; }
-  finally { if (token === campRequest) $('camp-form').querySelector('button').disabled = false; }
+    state.camps = result.campsites; state.campWarnings = result.warnings; renderCampsites(); renderMap();
+  } catch (e) { if (token === campRequest) { state.campError = e.message; renderCampsites(); } }
+  finally { if (token === campRequest) lockCampSearch(false); }
 }
 function renderCampsites() {
-  const type = $('camp-type').value;
-  const query = $('camp-name-filter').value.trim().toLowerCase();
-  const camps = state.camps.filter(c => (type === 'all' || c.type === type) && c.name.toLowerCase().includes(query));
+  if (state.campError) { $('camp-results').innerHTML = `<div class="status-message error">${esc(state.campError)}</div>`; return; }
+  const type = $('camp-type').value, source = $('camp-source').value, query = $('camp-name-filter').value;
+  const camps = state.camps.filter(c => matchesCampsite(c,type,source,query));
   const selected = state.trip.stops.find(s => s.id === state.campStop)?.campsite?.id;
-  $('camp-results').innerHTML = camps.length ? `<p class="muted">${camps.length} places to stay · nearest first</p>` + camps.map(c => `<article class="camp-card"><div class="camp-card-head"><h3>${esc(c.name)}</h3><span class="camp-distance">${c.distanceKm} km</span></div><p class="camp-type">${c.type === 'camp_site' ? 'Camping' : 'Camper / caravan site'}${c.access === 'private' ? ' · Private access: verify that visitors are accepted' : c.access === 'customers' ? ' · For guests' : ''}</p><div class="facilities">${c.facilities.length ? c.facilities.map(f => `<span class="facility">${esc(f)}</span>`).join('') : '<span class="muted">Facilities not listed</span>'}</div><div class="camp-card-footer">${safeUrl(c.website) ? `<a href="${esc(safeUrl(c.website))}" target="_blank" rel="noopener noreferrer">Visit website ↗</a>` : ''}<a href="https://www.openstreetmap.org/${esc(c.id)}" target="_blank" rel="noopener noreferrer">On the map ↗</a><button class="primary" data-choose="${esc(c.id)}" ${c.id === selected ? 'disabled' : ''}>${c.id === selected ? 'Selected ✓' : 'Stay here'}</button></div></article>`).join('') : '<div class="status-message">No campsites found for this filter. Try a larger radius or include camper / caravan sites. Use the map-search links above to check other listings.</div>';
+  const warnings = state.campWarnings.map(w => `<div class="status-message provider-warning">${esc(w)}</div>`).join('');
+  const cards = camps.map(c => {
+    const sources = campsiteSources(c);
+    const rating = Number.isFinite(c.rating) ? `<span class="camp-rating">★ ${c.rating.toFixed(1)}/5${Number.isInteger(c.reviewCount) ? ` · ${c.reviewCount} reviews` : ''}</span>` : '';
+    return `<article class="camp-card"><div class="camp-card-head"><h3>${esc(c.name)}</h3><span class="camp-distance">${c.distanceKm} km</span></div><div class="camp-source-row">${sources.map(s => `<span class="source-badge ${s.name === 'Park4Night' ? 'source-p4n' : ''}">${esc(s.name)}</span>`).join('')}${rating}</div><p class="camp-type">${esc(campsiteType(c))}${c.access === 'private' ? ' · Private access: verify that visitors are accepted' : c.access === 'customers' ? ' · For guests' : ''}</p><div class="facilities">${c.facilities.length ? c.facilities.map(f => `<span class="facility">${esc(f)}</span>`).join('') : '<span class="muted">Facilities not listed</span>'}</div><div class="camp-card-footer">${safeUrl(c.website) ? `<a href="${esc(safeUrl(c.website))}" target="_blank" rel="noopener noreferrer">Visit website ↗</a>` : ''}${sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)} ↗</a>`).join('')}<button class="primary" data-choose="${esc(c.id)}" ${c.id === selected ? 'disabled' : ''}>${c.id === selected ? 'Selected ✓' : 'Stay here'}</button></div></article>`;
+  }).join('');
+  $('camp-results').innerHTML = warnings + (camps.length ? `<p class="muted">${camps.length} ${camps.length === 1 ? 'place' : 'places'} to stay · nearest first</p>${cards}` : '<div class="status-message">No campsites found for this filter. Try a larger radius, another source, or include other overnight spots. Use the map-search links above for more listings.</div>');
   $('camp-results').querySelectorAll('[data-choose]').forEach(b => b.addEventListener('click', () => {
     const stop = state.trip.stops.find(s => s.id === state.campStop); if (!stop) return;
     stop.campsite = clone(state.camps.find(c => c.id === b.dataset.choose)); if (!stop.nights) stop.nights = 1; dirty(); renderStops(); renderMap(); renderCampsites();
@@ -302,6 +313,7 @@ $('fit-map').addEventListener('click', () => renderMap(true));
 $('calculate-route').addEventListener('click', () => calculateRoute());
 $('camp-form').addEventListener('submit', e => { e.preventDefault(); findCampsites(); });
 $('camp-type').addEventListener('change', renderCampsites);
+$('camp-source').addEventListener('change', renderCampsites);
 $('camp-name-filter').addEventListener('input', renderCampsites);
 $('set-start').addEventListener('click', () => openPlaceDialog('',{endpoint:'start'}));
 $('set-end').addEventListener('click', () => openPlaceDialog('',{endpoint:'end'}));

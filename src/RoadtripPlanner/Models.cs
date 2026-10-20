@@ -26,7 +26,11 @@ public sealed record Stop
 
 public sealed record Place(string Name, string Description, double Latitude, double Longitude);
 public sealed record Campsite(string Id, string Name, double Latitude, double Longitude,
-    double DistanceKm, string Type, string? Website, string? Phone, string[] Facilities, string? Access = null);
+    double DistanceKm, string Type, string? Website, string? Phone, string[] Facilities, string? Access = null,
+    string Source = "OpenStreetMap", string? SourceUrl = null, double? Rating = null,
+    int? ReviewCount = null, string? Category = null, CampsiteSourceLink[]? OtherSources = null);
+public sealed record CampsiteSourceLink(string Name,string Url);
+public sealed record CampsiteSearchResult(Campsite[] Campsites,string[] Warnings);
 public sealed record RouteRequest(List<RoutePoint> Points);
 public sealed record RoutePoint(double Latitude, double Longitude);
 public sealed record RoadRoute(double DistanceKm, double DurationHours, double[][] Coordinates, RoadLeg[] Legs);
@@ -56,9 +60,16 @@ public static class TripValidation
             if (stop.Campsite is { } camp && (!ValidCoordinates(camp.Latitude, camp.Longitude)
                 || string.IsNullOrWhiteSpace(camp.Name) || camp.Name.Length > 500
                 || camp.Id is null || camp.Id.Length > 200 || !double.IsFinite(camp.DistanceKm) || camp.DistanceKm < 0
-                || camp.Type is not ("camp_site" or "caravan_site") || camp.Facilities is null || camp.Facilities.Length > 30
+                || camp.Type is not ("camp_site" or "caravan_site" or "overnight_parking" or "nature_spot") || camp.Facilities is null || camp.Facilities.Length > 30
                 || camp.Facilities.Any(f => f is null || f.Length > 100)
-                || (camp.Website?.Length ?? 0) > 2000 || (camp.Phone?.Length ?? 0) > 100 || (camp.Access?.Length ?? 0) > 100))
+                || (camp.Website?.Length ?? 0) > 2000 || (camp.Phone?.Length ?? 0) > 100 || (camp.Access?.Length ?? 0) > 100
+                || camp.Source is not ("OpenStreetMap" or "Park4Night")
+                || (camp.SourceUrl is not null && (camp.SourceUrl.Length > 2000 || MapService.SafeWebsite(camp.SourceUrl) is null))
+                || (camp.Rating.HasValue && (!double.IsFinite(camp.Rating.Value) || camp.Rating.Value is < 0 or > 5))
+                || camp.ReviewCount < 0 || (camp.Category?.Length ?? 0) > 120
+                || (camp.OtherSources is not null && (camp.OtherSources.Length > 4
+                    || camp.OtherSources.Any(link => link is null || link.Name is not ("OpenStreetMap" or "Park4Night")
+                        || link.Url is null || link.Url.Length > 2000 || MapService.SafeWebsite(link.Url) is null)))))
                 return "The selected campsite is invalid.";
         }
         return null;

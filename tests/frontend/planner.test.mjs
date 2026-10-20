@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {routeNodes,routeSignature,insertionIndex,formatDriving} from '../../src/RoadtripPlanner/wwwroot/planner.mjs';
+import {routeNodes,routeSignature,insertionIndex,formatDriving,campsiteSources,campsiteType,matchesCampsite} from '../../src/RoadtripPlanner/wwwroot/planner.mjs';
 const home = {name:'Home',latitude:52.3,longitude:5.6};
 const finish = {name:'Finish',latitude:51,longitude:4};
 const stops = [{id:'a',name:'Milan',latitude:45.4,longitude:9.1,nights:2},{id:'b',name:'Nice',latitude:43.7,longitude:7.2,nights:3}];
@@ -35,4 +35,22 @@ test('driving duration rounds minutes before formatting', () => {
   assert.equal(formatDriving(1.999),'2h');
   assert.equal(formatDriving(.5),'30 min');
   assert.equal(formatDriving(5.25),'5h 15m');
+});
+
+test('source links support Park4Night, merged sources and older OSM saves', () => {
+  assert.equal(campsiteSources({id:'way/123'})[0].url,'https://www.openstreetmap.org/way/123');
+  const camp = {id:'park4night/55',source:'Park4Night',otherSources:[{name:'OpenStreetMap',url:'https://www.openstreetmap.org/way/123'}]};
+  assert.deepEqual(campsiteSources(camp).map(s => s.name),['Park4Night','OpenStreetMap']);
+  assert.equal(campsiteSources(camp)[0].url,'https://park4night.com/en/place/55');
+  assert.deepEqual(campsiteSources({...camp,sourceUrl:'javascript:alert(1)',otherSources:[]}),[]);
+  assert.deepEqual(campsiteSources({id:'park4night/55',source:'OpenStreetMap'}),[]);
+});
+test('default camping filter does not disguise parking or nature spots as a camping', () => {
+  const camp = {id:'park4night/55',name:'Sun camp',source:'Park4Night',type:'camp_site'};
+  assert.equal(matchesCampsite(camp),true);
+  assert.equal(matchesCampsite({...camp,type:'overnight_parking'}),false);
+  assert.equal(matchesCampsite({...camp,type:'nature_spot'},'other'),true);
+  assert.equal(matchesCampsite(camp,'all','OpenStreetMap'),false);
+  assert.equal(matchesCampsite({...camp,otherSources:[{name:'OpenStreetMap',url:'https://www.openstreetmap.org/way/1'}]},'all','OpenStreetMap'),true);
+  assert.equal(campsiteType({...camp,category:'Farm stay'}),'Farm stay');
 });

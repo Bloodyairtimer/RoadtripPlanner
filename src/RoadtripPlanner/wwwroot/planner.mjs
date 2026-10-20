@@ -19,3 +19,30 @@ export function formatDriving(hours) {
   const minutes = Math.round(hours * 60);
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes/60)}h ${minutes%60 ? `${minutes%60}m` : ''}`.trim();
 }
+
+export function campsiteSources(camp) {
+  const source = camp.source ?? 'OpenStreetMap';
+  const fallback = source === 'Park4Night' && /^park4night\/[1-9]\d*$/.test(camp.id)
+    ? `https://park4night.com/en/place/${camp.id.split('/')[1]}`
+    : source === 'OpenStreetMap' && /^(node|way|relation)\/[1-9]\d*$/.test(camp.id)
+      ? `https://www.openstreetmap.org/${camp.id}` : null;
+  const links = [{name:source,url:camp.sourceUrl ?? fallback},...(camp.otherSources ?? [])];
+  const seen = new Set();
+  return links.filter(link => {
+    if (!['Park4Night','OpenStreetMap'].includes(link.name)) return false;
+    try {
+      const url = new URL(link.url);
+      if (!['https:','http:'].includes(url.protocol) || seen.has(url.href)) return false;
+      seen.add(url.href);return true;
+    } catch { return false; }
+  });
+}
+export function campsiteType(camp) {
+  return camp.category ?? ({camp_site:'Camping',caravan_site:'Camper / caravan site',overnight_parking:'Parking day/night',nature_spot:'Surrounded by nature'}[camp.type] ?? 'Place to stay');
+}
+export function matchesCampsite(camp,type = 'all',source = 'all',query = '') {
+  const typeMatches = type === 'all' ? ['camp_site','caravan_site'].includes(camp.type)
+    : type === 'any' ? true : type === 'other' ? ['overnight_parking','nature_spot'].includes(camp.type) : camp.type === type;
+  return typeMatches && (source === 'all' || (camp.source ?? 'OpenStreetMap') === source || campsiteSources(camp).some(s => s.name === source))
+    && camp.name.toLowerCase().includes(query.trim().toLowerCase());
+}

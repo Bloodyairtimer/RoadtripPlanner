@@ -60,7 +60,7 @@ public sealed class MapService(HttpClient http, IConfiguration config, IMemoryCa
                     timeout.CancelAfter(TimeSpan.FromSeconds(16));
                     // A small encoded GET is compatible with providers/proxies that reject form POSTs.
                     using var json = await GetJson($"{endpoint}{(endpoint.Contains('?') ? '&' : '?')}data={Uri.EscapeDataString(query)}", timeout.Token);
-                    if (json.RootElement.TryGetProperty("remark", out _) || !json.RootElement.TryGetProperty("elements", out var elements)
+                    if (json.RootElement.ValueKind != JsonValueKind.Object || json.RootElement.TryGetProperty("remark", out _) || !json.RootElement.TryGetProperty("elements", out var elements)
                         || elements.ValueKind != JsonValueKind.Array)
                         throw new HttpRequestException("The campsite provider returned an incomplete response.");
                     found = ParseCampsites(elements, latitude, longitude, radiusKm);
