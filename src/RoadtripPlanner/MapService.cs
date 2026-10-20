@@ -161,9 +161,10 @@ public sealed class MapService(HttpClient http, IConfiguration config, IMemoryCa
     public async Task<RoadRoute?> Route(List<RoutePoint> points, CancellationToken ct)
     {
         var coordinates = string.Join(';', points.Select(p => $"{Number(p.Longitude)},{Number(p.Latitude)}"));
-        var key = "route:" + coordinates;
+        var key = "route:stopovers:" + coordinates;
         if (cache.TryGetValue(key, out RoadRoute? found)) return found;
-        using var json = await GetJson($"{Setting("RoutingUrl").TrimEnd('/')}/route/v1/driving/{coordinates}?overview=full&geometries=geojson&steps=true", ct);
+        // Stops are visits, not through-waypoints: allow departure in either direction.
+        using var json = await GetJson($"{Setting("RoutingUrl").TrimEnd('/')}/route/v1/driving/{coordinates}?overview=full&geometries=geojson&steps=true&continue_straight=false", ct);
         if (Text(json.RootElement, "code") != "Ok") return null;
         var route = json.RootElement.GetProperty("routes")[0];
         var providerLegs = route.GetProperty("legs").EnumerateArray().ToArray();

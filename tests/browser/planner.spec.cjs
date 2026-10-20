@@ -170,5 +170,45 @@ test('round trip draws and counts the return leg to the shared start and finish'
   await expect(page.locator('#summary-distance')).toHaveText('275 km');
   await expect(page.locator('#map .route-final')).toHaveCount(1);
   await page.locator('#map .route-final').dispatchEvent('click');
+  await expect(page.locator('#map-leg-title')).toHaveText('Nice → Ermelo');
+  await expect(page.locator('#map-leg-distance')).toContainText('175 km');
+  await page.locator('#map-leg-insert').click();
   await expect(page.locator('#insert-description')).toContainText('Nice → Ermelo · 175 km');
+});
+
+
+test('distance buttons select only their map leg, support keyboard and clear stale highlights',async ({page}) => {
+  await fixtures(page); await newTrip(page);
+  await page.locator('#set-start').click(); await choosePlace(page,'Ermelo');
+  await page.locator('#add-place').click(); await choosePlace(page,'Milan');
+  await page.locator('#add-place').click(); await choosePlace(page,'Nice');
+  await page.locator('#return-home').click();
+  await expect(page.locator('#summary-distance')).toHaveText('300 km');
+  const distance = page.locator('[data-focus-leg="2"]');
+  await distance.click();
+  await expect(distance).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#map .route-selected')).toHaveCount(1);
+  await expect(page.locator('#map .route-final')).toHaveAttribute('stroke','#7535bf');
+  await expect(page.locator('#map-leg-title')).toHaveText('Nice → Ermelo');
+  await expect(page.locator('#map-leg-distance')).toHaveText('100 km · 1h 30m');
+  await expect(page.locator('#insert-dialog')).toBeHidden();
+  await page.screenshot({path:'../../TestResults/selected-return-leg.png',fullPage:true});
+  await page.locator('[data-focus-leg="0"]').focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#map-leg-title')).toHaveText('Ermelo → Milan');
+  await expect(distance).toHaveAttribute('aria-pressed','false');
+  await expect(page.locator('#map .route-final')).toHaveAttribute('stroke-opacity','0.2');
+  await expect(page.locator('#map .route-selected')).toHaveCount(1);
+  await page.locator('#clear-leg-selection').click();
+  await expect(page.locator('#map .route-selected')).toHaveCount(0);
+  await expect(page.locator('#map-leg-selection')).toBeHidden();
+  await distance.click();
+  await page.locator('.stop-card').first().getByRole('button',{name:'Move Milan later'}).click();
+  await expect(page.locator('#map-leg-selection')).toBeHidden();
+  await expect(page.locator('#map .route-selected')).toHaveCount(0);
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.locator('[data-focus-leg="2"]')).toBeEnabled();
+  await page.locator('[data-focus-leg="2"]').click();
+  await expect(page.locator('#map-leg-selection')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({path:'../../TestResults/selected-leg-mobile.png',fullPage:true});
 });

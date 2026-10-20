@@ -278,6 +278,29 @@ public sealed class PlannerTests
     }
 
     [Fact]
+    public async Task ReturnLegAllowsTurningAtStopsAndUsesItsOwnRoadGeometry()
+    {
+        var handler = new FixtureHandler("""
+        {"code":"Ok","routes":[{"distance":275000,"duration":10800,"geometry":{"coordinates":[[5,52],[7,50],[8,48],[6,49],[5,52]]},"legs":[
+          {"distance":175000,"duration":7200,"steps":[{"geometry":{"coordinates":[[5,52],[7,50],[8,48]]}}]},
+          {"distance":100000,"duration":3600,"steps":[{"geometry":{"coordinates":[[8,48],[6,49],[5,52]]}}]}
+        ]}]}
+        """);
+        using var http = new HttpClient(handler); using var cache = new MemoryCache(new MemoryCacheOptions());
+        var maps = new MapService(http,Settings(),cache);
+        var route = await maps.Route([new(52,5),new(48,8),new(52,5)],CancellationToken.None);
+        Assert.NotNull(route);
+        Assert.Contains("continue_straight=false",handler.LastUri);
+        Assert.Contains("5,52;8,48;5,52",Uri.UnescapeDataString(handler.LastUri));
+        Assert.Equal(275,route.DistanceKm);
+        Assert.Equal(new double[] {100, 1},new[] {route.Legs[1].DistanceKm,route.Legs[1].DurationHours});
+        Assert.Equal(new double[] {49,6},route.Legs[1].Coordinates[1]);
+        Assert.Equal(new double[] {52,5},route.Legs[1].Coordinates[^1]);
+        await maps.Route([new(52,5),new(48,8),new(52,5)],CancellationToken.None);
+        Assert.Equal(1,handler.Calls);
+    }
+
+    [Fact]
     public async Task HalfwayStopInterpolatesOnAStraightRoadInsteadOfRepeatingEndpoint()
     {
         var handler = new FixtureHandler("""{"code":"Ok","routes":[{"distance":222000,"duration":7200,"geometry":{"coordinates":[[0,0],[2,0]]},"legs":[{"distance":222000,"duration":7200,"steps":[{"geometry":{"coordinates":[[0,0],[2,0]]}}]}]}]}""");

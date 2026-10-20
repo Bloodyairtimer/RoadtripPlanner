@@ -1,6 +1,6 @@
 import {routeNodes, routeSignature, insertionIndex, formatDriving, campsiteSources, campsiteType, matchesCampsite} from './planner.mjs';
 const $ = id => document.getElementById(id);
-const state = { trips: [], trip: null, selected: null, dirty: false, busy: false, camps: [], campStop: null, route: null, routeKey: null, routing: false, routeError: null, campWarnings: [], campError: null, campLoading: false, placeTarget: null, insertLeg: null, mapInsert: null };
+const state = { trips: [], trip: null, selected: null, selectedLeg: null, dirty: false, busy: false, camps: [], campStop: null, route: null, routeKey: null, routing: false, routeError: null, campWarnings: [], campError: null, campLoading: false, placeTarget: null, insertLeg: null, mapInsert: null };
 let map, stopLayer, campLayer, lineLayer, toastTimer, dragId, placeRequest = 0, campRequest = 0, routeTimer, routeRequest = 0, routeController, queuedRouteKey;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone = value => structuredClone(value);
@@ -45,7 +45,7 @@ function renderSidebar() {
   $('trip-list').querySelectorAll('[data-trip]').forEach(button => button.addEventListener('click', () => selectTrip(button.dataset.trip)));
 }
 function setTrip(trip) {
-  clearTimeout(routeTimer); routeController?.abort(); queuedRouteKey = null; state.routing = false; state.routeError = null; state.mapInsert = null;
+  clearTimeout(routeTimer); routeController?.abort(); queuedRouteKey = null; state.routing = false; state.routeError = null; state.mapInsert = null; state.selectedLeg = null;
   state.trip = trip ? {startLocation:null,endLocation:null,...clone(trip)} : null; state.dirty = false; state.route = null; state.routeKey = null; state.camps = []; state.selected = trip?.stops[0]?.id ?? null;
   render(); renderMap(true); scheduleRoute();
   try { if (trip) localStorage.setItem('roam-trip', trip.id); else localStorage.removeItem('roam-trip'); } catch { /* Browser storage is optional. */ }
@@ -78,18 +78,33 @@ function renderSummary() {
   $('calculate-route').textContent = state.routing ? 'Routing…' : 'Update route';
   $('summary-distance').textContent = route ? `${Math.round(route.distanceKm).toLocaleString()} km` : state.routing ? 'Calculating…' : count < 2 ? 'Your route awaits' : state.routeError ? 'Route unavailable' : 'Ready to route';
   $('summary-duration').textContent = route ? `${formatDriving(route.durationHours)} driving · ${route.legs.length} legs` : count < 2 ? 'Set start, finish or highlights' : state.routeError ? 'Tap Update route to retry' : 'Road distances between every stop';
-  $('route-note').textContent = route ? 'Driving distances follow the road between your pinned locations. Car estimates exclude breaks and traffic; check camper dimensions, ferries and road restrictions.' : state.routeError ?? 'Routes update automatically as you add or move places. Dotted lines are only a preview, not driving distances.';
+  $('route-note').textContent = route ? 'Driving distances follow the road between your pinned locations. Routes favour driving time rather than the fewest kilometres; estimates exclude breaks and traffic. Check camper dimensions, ferries and road restrictions.' : state.routeError ?? 'Routes update automatically as you add or move places. Dotted lines are only a preview, not driving distances.';
 }
 function legMarkup(index) {
   const nodes = routeNodes(state.trip), route = validRoute(), leg = route?.legs[index];
-  return `<div class="drive-leg ${leg?.durationHours > 4 ? 'long-drive' : ''}" data-leg-index="${index}"><div class="leg-line"><span>⌁</span><div><strong class="leg-distance">${leg ? `${Math.round(leg.distanceKm).toLocaleString()} km · ${formatDriving(leg.durationHours)}` : state.routing ? 'Calculating road distance…' : 'Road distance pending'}</strong><small>${esc(nodes[index].name)} → ${esc(nodes[index+1].name)}</small></div><button data-insert-leg="${index}" class="leg-insert" title="Add a stop between ${esc(nodes[index].name)} and ${esc(nodes[index+1].name)}">+ Add a stop</button></div></div>`;
+  return `<div class="drive-leg ${leg?.durationHours > 4 ? 'long-drive' : ''} ${state.selectedLeg === index ? 'selected-leg' : ''}" data-leg-index="${index}"><div class="leg-line"><span>⌁</span><button class="leg-focus" data-focus-leg="${index}" aria-pressed="${state.selectedLeg === index}" aria-label="Show ${esc(nodes[index].name)} to ${esc(nodes[index+1].name)} on map" ${!leg ? 'disabled' : ''}><strong class="leg-distance">${leg ? `${Math.round(leg.distanceKm).toLocaleString()} km · ${formatDriving(leg.durationHours)}` : state.routing ? 'Calculating road distance…' : 'Road distance pending'}</strong><small>${esc(nodes[index].name)} → ${esc(nodes[index+1].name)}</small></button><button data-insert-leg="${index}" class="leg-insert" title="Add a stop between ${esc(nodes[index].name)} and ${esc(nodes[index+1].name)}">+ Add a stop</button></div></div>`;
 }
 function renderLegs() {
   $('stop-list').querySelectorAll('[data-leg-index]').forEach(row => {
-    const leg = validRoute()?.legs[Number(row.dataset.legIndex)];
+    const index = Number(row.dataset.legIndex), leg = validRoute()?.legs[index];
+    row.classList.toggle('selected-leg', state.selectedLeg === index);
+    row.querySelector('[data-focus-leg]').setAttribute('aria-pressed', String(state.selectedLeg === index));
+    row.querySelector('[data-focus-leg]').disabled = !leg;
     row.classList.toggle('long-drive', !!leg && leg.durationHours > 4);
     row.querySelector('.leg-distance').textContent = leg ? `${Math.round(leg.distanceKm).toLocaleString()} km · ${formatDriving(leg.durationHours)}` : state.routing ? 'Calculating road distance…' : 'Road distance pending';
   });
+}
+function focusLeg(index) {
+  const leg = validRoute()?.legs[index];
+  if (!leg || !map) return;
+  state.selectedLeg = index;
+  renderLegs(); renderMap();
+  map.invalidateSize(); map.fitBounds(leg.coordinates,{padding:[50,50],maxZoom:12});
+  $('map').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function clearLegSelection() {
+  state.selectedLeg = null;
+  renderLegs(); renderMap();
 }
 function renderStops() {
   let days = 0;
@@ -107,6 +122,7 @@ function renderStops() {
   }
   if (!state.trip.stops.length) html += '<div class="empty-stops">Start with the highlights.<br>Add the places you want to see, then refine the journey with stops between them.</div>';
   $('stop-list').innerHTML = html;
+  $('stop-list').querySelectorAll('[data-focus-leg]').forEach(b => b.addEventListener('click', () => focusLeg(Number(b.dataset.focusLeg))));
   $('stop-list').querySelectorAll('[data-insert-leg]').forEach(b => b.addEventListener('click', () => openInsert(Number(b.dataset.insertLeg))));
   $('stop-list').querySelectorAll('[data-stop]').forEach(card => {
     const id = card.dataset.stop;
@@ -190,6 +206,7 @@ function insertHalfway() {
 function scheduleRoute() {
   const key = pointKey();
   if (key === state.routeKey || key === queuedRouteKey) return;
+  state.selectedLeg = null;
   clearTimeout(routeTimer); routeController?.abort(); routeRequest++;
   state.routing = false; state.routeError = null; queuedRouteKey = key;
   if (routeNodes(state.trip).length < 2) { queuedRouteKey = null; renderSummary(); return; }
@@ -213,7 +230,16 @@ async function saveTrip() {
     state.trip = saved; state.trips = state.trips.map(t => t.id === saved.id ? saved : t); state.dirty = false; renderSidebar(); notify('Trip saved. The road can wait.');
   });
 }
+function renderLegSelection() {
+  const nodes = routeNodes(state.trip), leg = validRoute()?.legs[state.selectedLeg];
+  $('map-leg-selection').hidden = !leg;
+  if (!leg) return;
+  const index = state.selectedLeg;
+  $('map-leg-title').textContent = `${nodes[index].name} → ${nodes[index+1].name}`;
+  $('map-leg-distance').textContent = `${Math.round(leg.distanceKm).toLocaleString()} km · ${formatDriving(leg.durationHours)}`;
+}
 function renderMap(fit = false) {
+  renderLegSelection();
   if (!map) return;
   stopLayer.clearLayers(); campLayer.clearLayers(); lineLayer.clearLayers();
   $('map-pick-banner').hidden = !state.mapInsert;
@@ -234,12 +260,15 @@ function renderMap(fit = false) {
   $('map-finish-label').textContent = sharedEndpoint ? 'Return to start' : 'To finish';
   if (route) route.legs.forEach((leg,i) => {
     const finalLeg = nodes[i+1].kind === 'end';
+    const selected = state.selectedLeg === i, dimmed = state.selectedLeg !== null && !selected;
     // Dashes preserve the outward route underneath when both legs use the same road.
-    L.polyline(leg.coordinates,{className:`route-leg${finalLeg ? ' route-final' : ''}`,color:finalLeg ? '#d95436' : i%2 ? '#007db3' : '#00aeb5',weight:finalLeg ? 6 : 5,dashArray:finalLeg ? '10,8' : null,opacity:.9})
+    const line = L.polyline(leg.coordinates,{className:`route-leg${finalLeg ? ' route-final' : ''}${selected ? ' route-selected' : ''}`,color:selected ? '#7535bf' : finalLeg ? '#d95436' : i%2 ? '#007db3' : '#00aeb5',weight:selected ? 8 : finalLeg ? 6 : 5,dashArray:finalLeg && !selected ? '10,8' : null,opacity:dimmed ? .2 : 1})
       .bindTooltip(`${finalLeg ? sharedEndpoint ? 'Return to start: ' : 'To finish: ' : ''}${esc(nodes[i].name)} → ${esc(nodes[i+1].name)} · ${Math.round(leg.distanceKm)} km`)
-      .on('click', () => { if (!state.mapInsert) openInsert(i); }).addTo(lineLayer);
+      .on('click', () => { if (!state.mapInsert) focusLeg(i); }).addTo(lineLayer);
+    if (selected) line.bringToFront();
   });
   else if (points.length > 1) L.polyline(points,{color:'#00aeb5',weight:3,dashArray:'5,8',opacity:.55}).addTo(lineLayer);
+  lineLayer.eachLayer(line => { if (line.options.className?.includes('route-selected')) line.bringToFront(); });
   for (const camp of state.camps) addCampMarker(camp,false);
   if (fit && points.length) { map.invalidateSize(); map.fitBounds(route?.coordinates.length ? [...points,...route.coordinates] : points,{padding:[45,45],maxZoom:11}); }
 }
@@ -321,7 +350,9 @@ $('save-trip').addEventListener('click', saveTrip);
 $('trip-notes').addEventListener('input', e => { state.trip.notes = e.target.value; dirty(); });
 for (const id of ['add-place','add-place-bottom']) $(id).addEventListener('click', () => openPlaceDialog());
 for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => $(b.dataset.close).close());
-$('fit-map').addEventListener('click', () => renderMap(true));
+$('fit-map').addEventListener('click', () => { clearLegSelection(); renderMap(true); });
+$('clear-leg-selection').addEventListener('click', clearLegSelection);
+$('map-leg-insert').addEventListener('click', () => openInsert(state.selectedLeg));
 $('calculate-route').addEventListener('click', () => calculateRoute());
 $('camp-form').addEventListener('submit', e => { e.preventDefault(); findCampsites(); });
 $('camp-type').addEventListener('change', renderCampsites);
