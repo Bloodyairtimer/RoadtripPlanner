@@ -118,6 +118,11 @@ test('Park4Night sources, ratings, overnight filters and saved choice',async ({p
 
 test('trip dates can be created, edited, validated and cleared',async ({page}) => {
   await fixtures(page); await newTrip(page);
+  // Reopening settings must wait for a slow save instead of dropping the click.
+  await page.route('**/api/trips/*',async route => {
+    if (route.request().method() === 'PUT') await new Promise(resolve => setTimeout(resolve,200));
+    await route.continue();
+  });
   await page.locator('#trip-settings').click();
   await expect(page.locator('#trip-date')).toHaveValue('2027-04-24');
   await page.locator('#trip-end-date').fill('2027-04-23');
@@ -128,6 +133,7 @@ test('trip dates can be created, edited, validated and cleared',async ({page}) =
   await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
   await expect(page.locator('#trip-dialog')).toBeHidden();
   await expect(page.locator('#summary-end')).toContainText('2027');
+  await expect(page.locator('#save-state')).toHaveText('All changes saved');
   await page.reload();
   await page.locator('#trip-settings').click();
   await expect(page.locator('#trip-date')).toHaveValue('2027-04-24');
@@ -139,6 +145,7 @@ test('trip dates can be created, edited, validated and cleared',async ({page}) =
   await page.locator('#trip-date').fill(''); await page.locator('#trip-end-date').fill('');
   await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
   await expect(page.locator('#summary-date')).toHaveText('Start date to be decided');
+  await expect(page.locator('#save-state')).toHaveText('All changes saved');
   await page.reload(); await page.locator('#trip-settings').click();
   await expect(page.locator('#trip-date')).toHaveValue('');
   await expect(page.locator('#trip-end-date')).toHaveValue('');

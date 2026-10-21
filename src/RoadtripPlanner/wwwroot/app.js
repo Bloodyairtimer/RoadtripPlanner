@@ -29,6 +29,7 @@ function renderSave() {
   $('save-state').textContent = state.busy ? 'Saving…' : state.dirty ? 'Unsaved changes' : 'All changes saved';
   $('save-state').classList.toggle('dirty', state.dirty);
   $('save-trip').disabled = !state.dirty || state.busy;
+  for (const id of ['trip-settings','new-trip','first-trip']) $(id).disabled = state.busy;
 }
 function canLeave() { return !state.dirty || confirm('You have unsaved changes. Discard them?'); }
 async function busy(action) {
