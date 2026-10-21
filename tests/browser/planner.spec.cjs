@@ -177,7 +177,19 @@ test('round trip draws and counts the return leg to the shared start and finish'
 });
 
 
-test('distance buttons select only their map leg, support keyboard and clear stale highlights',async ({page}) => {
+test('selected legs keep the entire route visible with keyboard and mobile support',async ({page}) => {
+  async function expectFullRoute() {
+    await expect(page.locator('#map .route-leg')).toHaveCount(3);
+    for (const path of await page.locator('#map .route-leg').all())
+      await expect(path).toHaveAttribute('stroke-opacity','1');
+    await expect.poll(() => page.locator('#map').evaluate(el => {
+      const map = el.getBoundingClientRect();
+      return [...el.querySelectorAll('.route-leg')].every(path => {
+        const r = path.getBoundingClientRect();
+        return r.left >= map.left && r.right <= map.right && r.top >= map.top && r.bottom <= map.bottom;
+      });
+    })).toBe(true);
+  }
   await fixtures(page); await newTrip(page);
   await page.locator('#set-start').click(); await choosePlace(page,'Ermelo');
   await page.locator('#add-place').click(); await choosePlace(page,'Milan');
@@ -192,11 +204,13 @@ test('distance buttons select only their map leg, support keyboard and clear sta
   await expect(page.locator('#map-leg-title')).toHaveText('Nice → Ermelo');
   await expect(page.locator('#map-leg-distance')).toHaveText('100 km · 1h 30m');
   await expect(page.locator('#insert-dialog')).toBeHidden();
+  await expectFullRoute();
   await page.screenshot({path:'../../TestResults/selected-return-leg.png',fullPage:true});
   await page.locator('[data-focus-leg="0"]').focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#map-leg-title')).toHaveText('Ermelo → Milan');
   await expect(distance).toHaveAttribute('aria-pressed','false');
-  await expect(page.locator('#map .route-final')).toHaveAttribute('stroke-opacity','0.2');
+  await expectFullRoute();
+  await expect(page.locator('#map .route-final')).toHaveAttribute('stroke-opacity','1');
   await expect(page.locator('#map .route-selected')).toHaveCount(1);
   await page.locator('#clear-leg-selection').click();
   await expect(page.locator('#map .route-selected')).toHaveCount(0);
@@ -209,6 +223,10 @@ test('distance buttons select only their map leg, support keyboard and clear sta
   await expect(page.locator('[data-focus-leg="2"]')).toBeEnabled();
   await page.locator('[data-focus-leg="2"]').click();
   await expect(page.locator('#map-leg-selection')).toBeVisible();
+  await expectFullRoute();
+  // Map-line selection must preserve the full overview too.
+  await page.locator('#map .route-leg').first().dispatchEvent('click');
+  await expectFullRoute();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({path:'../../TestResults/selected-leg-mobile.png',fullPage:true});
 });

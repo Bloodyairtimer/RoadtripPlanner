@@ -98,8 +98,8 @@ function focusLeg(index) {
   const leg = validRoute()?.legs[index];
   if (!leg || !map) return;
   state.selectedLeg = index;
-  renderLegs(); renderMap();
-  map.invalidateSize(); map.fitBounds(leg.coordinates,{padding:[50,50],maxZoom:12});
+  // Keep the complete journey in view while highlighting one leg.
+  renderLegs(); renderMap(true);
   $('map').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function clearLegSelection() {
@@ -260,9 +260,9 @@ function renderMap(fit = false) {
   $('map-finish-label').textContent = sharedEndpoint ? 'Return to start' : 'To finish';
   if (route) route.legs.forEach((leg,i) => {
     const finalLeg = nodes[i+1].kind === 'end';
-    const selected = state.selectedLeg === i, dimmed = state.selectedLeg !== null && !selected;
+    const selected = state.selectedLeg === i;
     // Dashes preserve the outward route underneath when both legs use the same road.
-    const line = L.polyline(leg.coordinates,{className:`route-leg${finalLeg ? ' route-final' : ''}${selected ? ' route-selected' : ''}`,color:selected ? '#7535bf' : finalLeg ? '#d95436' : i%2 ? '#007db3' : '#00aeb5',weight:selected ? 8 : finalLeg ? 6 : 5,dashArray:finalLeg && !selected ? '10,8' : null,opacity:dimmed ? .2 : 1})
+    const line = L.polyline(leg.coordinates,{className:`route-leg${finalLeg ? ' route-final' : ''}${selected ? ' route-selected' : ''}`,color:selected ? '#7535bf' : finalLeg ? '#d95436' : i%2 ? '#007db3' : '#00aeb5',weight:selected ? 8 : finalLeg ? 6 : 5,dashArray:selected ? '12,6' : finalLeg ? '10,8' : null,opacity:1})
       .bindTooltip(`${finalLeg ? sharedEndpoint ? 'Return to start: ' : 'To finish: ' : ''}${esc(nodes[i].name)} → ${esc(nodes[i+1].name)} · ${Math.round(leg.distanceKm)} km`)
       .on('click', () => { if (!state.mapInsert) focusLeg(i); }).addTo(lineLayer);
     if (selected) line.bringToFront();
