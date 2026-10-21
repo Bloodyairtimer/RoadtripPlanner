@@ -1,0 +1,15 @@
+services:
+  roadtrip-planner:
+    build: .
+    image: roadtrip-planner:local
+    ports:
+      - "127.0.0.1:${ROADTRIP_PORT:-8088}:8080"
+    volumes:
+      - trips:/data
+    restart: unless-stopped
+    environment:
+      Data__Directory: /data
+      TomTom__ApiKey: ${TOMTOM_API_KEY:-}
+      TomTom__MonthlyRequestLimit: ${TOMTOM_MONTHLY_REQUEST_LIMIT:-1000}
+volumes:
+  trips:
