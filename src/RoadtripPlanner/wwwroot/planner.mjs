@@ -8,7 +8,7 @@ export function routeNodes(trip) {
   return nodes;
 }
 export function routeSignature(trip) {
-  return JSON.stringify(routeNodes(trip).map(p => [p.latitude,p.longitude]));
+  return JSON.stringify({points:routeNodes(trip).map(p => [p.latitude,p.longitude]),camper:trip?.camper ?? null});
 }
 export function insertionIndex(trip, legIndex) {
   const nodes = routeNodes(trip);
@@ -45,4 +45,8 @@ export function matchesCampsite(camp,type = 'all',source = 'all',query = '') {
     : type === 'any' ? true : type === 'other' ? ['overnight_parking','nature_spot'].includes(camp.type) : camp.type === type;
   return typeMatches && (source === 'all' || (camp.source ?? 'OpenStreetMap') === source || campsiteSources(camp).some(s => s.name === source))
     && camp.name.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+export function defaultCamperProfile() {
+  return {lengthM:7.48,widthM:2.30,heightM:2.98,weightKg:3500,maxSpeedKmh:120};
 }

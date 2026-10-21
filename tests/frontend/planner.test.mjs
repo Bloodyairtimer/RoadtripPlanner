@@ -54,3 +54,11 @@ test('default camping filter does not disguise parking or nature spots as a camp
   assert.equal(matchesCampsite({...camp,otherSources:[{name:'OpenStreetMap',url:'https://www.openstreetmap.org/way/1'}]},'all','OpenStreetMap'),true);
   assert.equal(campsiteType({...camp,category:'Farm stay'}),'Farm stay');
 });
+
+test('camper dimensions and speed invalidate routing without modifying stop order', () => {
+  const trip = {startLocation:home,endLocation:finish,stops,camper:{lengthM:7.48,widthM:2.3,heightM:2.98,weightKg:3500,maxSpeedKmh:120}};
+  assert.notEqual(routeSignature(trip),routeSignature({...trip,camper:{...trip.camper,maxSpeedKmh:100}}));
+  assert.notEqual(routeSignature(trip),routeSignature({...trip,camper:{...trip.camper,heightM:3.1}}));
+  assert.notEqual(routeSignature(trip),routeSignature({...trip,camper:null}));
+  assert.equal(routeSignature(trip),routeSignature({...trip,notes:'Coffee stop'}));
+});

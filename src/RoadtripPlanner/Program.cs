@@ -6,6 +6,15 @@ using RoadtripPlanner;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1_048_576);
 builder.Services.AddSingleton<TripStore>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<RoutingUsage>();
+builder.Services.AddHttpClient("tomtom", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(35);
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false }).RemoveAllLoggers();
+builder.Services.AddSingleton(sp => new TomTomRoutingService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("tomtom"),
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(), sp.GetRequiredService<RoutingUsage>()));
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("maps", client =>
 {
@@ -46,6 +55,10 @@ app.Use(async (context, next) =>
         }
     }
     try { await next(context); }
+    catch (RoutingException e)
+    {
+        await Results.Problem(e.Message, statusCode: e.StatusCode).ExecuteAsync(context);
+    }
     catch (CampsiteSearchException e)
     {
         app.Logger.LogWarning(e, "Campsite providers failed");
@@ -101,10 +114,14 @@ app.MapGet("/api/campsites/search", async (double latitude, double longitude, in
     if (!TripValidation.ValidCoordinates(latitude, longitude) || radiusKm is < 1 or > 50) return Results.Problem("Use valid coordinates and a radius between 1 and 50 km.", statusCode: 400);
     return Results.Ok(await search.Search(latitude,longitude,radiusKm,ct));
 }).RequireRateLimiting("discovery");
-app.MapPost("/api/route", async (RouteRequest input, MapService maps, CancellationToken ct) =>
+app.MapGet("/api/routing/status", async (TomTomRoutingService tomtom, RoutingUsage usage, CancellationToken ct) =>
+    Results.Ok(new { tomTomConfigured = tomtom.Configured, usage = await usage.Status(ct) }));
+app.MapPost("/api/route", async (RouteRequest input, MapService maps, TomTomRoutingService tomtom, CancellationToken ct) =>
 {
     if (input.Points is null || input.Points.Count is < 2 or > 102 || input.Points.Any(p => p is null || !TripValidation.ValidCoordinates(p.Latitude, p.Longitude)))
         return Results.Problem("Provide 2–102 valid route points.", statusCode: 400);
+    if (TripValidation.ValidateCamper(input.Camper) is { } error) return Results.Problem(error, statusCode: 400);
+    if (input.Camper is { } camper) return Results.Ok(await tomtom.Route(input.Points, camper, ct));
     return await maps.Route(input.Points, ct) is { } route ? Results.Ok(route) : Results.Problem("No driving route found for these stops.", statusCode: 422);
 }).RequireRateLimiting("routing");
 app.Run();

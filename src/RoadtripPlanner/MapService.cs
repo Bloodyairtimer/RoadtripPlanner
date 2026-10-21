@@ -188,7 +188,7 @@ public sealed class MapService(HttpClient http, IConfiguration config, IMemoryCa
     }
 
     // Follow the routed road geometry, rather than drawing a midpoint between destinations.
-    private static RoutePoint Midpoint(double[][] coordinates)
+    public static RoutePoint Midpoint(double[][] coordinates)
     {
         var lengths = coordinates.Zip(coordinates.Skip(1), (a, b) => Distance(a[0], a[1], b[0], b[1])).ToArray();
         var halfway = lengths.Sum() / 2;

@@ -22,7 +22,7 @@ public sealed class PlannerTests
             using (var factory = new PlannerFactory(directory))
             using (var client = factory.CreateClient())
             {
-                var input = new Trip { Name = "Coastal detour", StartDate = new DateOnly(2027,4,24), EndDate = new DateOnly(2027,5,8), StartLocation = new Place("Home","Ermelo",52.3,5.6), EndLocation = new Place("Home","Ermelo",52.3,5.6), Stops = [
+                var input = new Trip { Name = "Coastal detour", Camper = new CamperProfile(), StartDate = new DateOnly(2027,4,24), EndDate = new DateOnly(2027,5,8), StartLocation = new Place("Home","Ermelo",52.3,5.6), EndLocation = new Place("Home","Ermelo",52.3,5.6), Stops = [
                     new Stop { Name = "Milan", Latitude = 45.46, Longitude = 9.19, Nights = 2 },
                     new Stop { Name = "Nice", Latitude = 43.7, Longitude = 7.27, Nights = 3 }] };
                 var createdResponse = await client.PostAsJsonAsync("/api/trips", input);
@@ -30,7 +30,7 @@ public sealed class PlannerTests
                 var created = (await createdResponse.Content.ReadFromJsonAsync<Trip>())!;
                 id = created.Id;
                 var camp = new Campsite("node/123", "Coastal camping", 43.71, 7.28, 1.4, "camp_site", "https://example.com/", null, ["Showers"]);
-                var update = created with { Notes = "Take the scenic road", EndDate = new DateOnly(2027,5,9), Stops = [created.Stops[1] with { Nights = 4, Campsite = camp },created.Stops[0]] };
+                var update = created with { Notes = "Take the scenic road", Camper = created.Camper! with { MaxSpeedKmh = 100 }, EndDate = new DateOnly(2027,5,9), Stops = [created.Stops[1] with { Nights = 4, Campsite = camp },created.Stops[0]] };
                 var savedResponse = await client.PutAsJsonAsync($"/api/trips/{id}", update);
                 Assert.Equal(HttpStatusCode.OK, savedResponse.StatusCode);
                 var saved = (await savedResponse.Content.ReadFromJsonAsync<Trip>())!;
@@ -48,6 +48,8 @@ public sealed class PlannerTests
                 Assert.Equal("Take the scenic road", trip!.Notes);
                 Assert.Equal(new DateOnly(2027,4,24), trip.StartDate);
                 Assert.Equal(new DateOnly(2027,5,9), trip.EndDate);
+                Assert.Equal(100,trip.Camper?.MaxSpeedKmh);
+                Assert.Equal(2.98,trip.Camper?.HeightM);
                 Assert.Equal("Home", trip.StartLocation?.Name);
                 Assert.Equal(52.3, trip.EndLocation?.Latitude);
                 Assert.Equal("Nice", trip.Stops[0].Name);

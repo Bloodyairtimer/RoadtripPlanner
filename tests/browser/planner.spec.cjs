@@ -230,3 +230,38 @@ test('selected legs keep the entire route visible with keyboard and mobile suppo
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({path:'../../TestResults/selected-leg-mobile.png',fullPage:true});
 });
+
+
+test('camper defaults, speed edits and standard car mode persist and reroute',async ({page}) => {
+  const calls=await fixtures(page); const profiles=[];
+  page.on('request',r => { if (r.url().endsWith('/api/route')) profiles.push(r.postDataJSON().camper); });
+  await newTrip(page);
+  await page.locator('#set-start').click(); await choosePlace(page,'Ermelo');
+  await page.locator('#set-end').click(); await choosePlace(page,'Nice');
+  await expect(page.locator('#summary-distance')).toHaveText('100 km');
+  expect(profiles.at(-1)).toEqual({lengthM:7.48,widthM:2.3,heightM:2.98,weightKg:3500,maxSpeedKmh:120});
+  await page.locator('#trip-settings').click();
+  await expect(page.locator('#camper-routing')).toBeChecked();
+  await expect(page.locator('#camper-speed')).toHaveValue('120');
+  await expect(page.locator('#routing-status')).toContainText('API key missing');
+  const before=calls();
+  await page.locator('#camper-speed').fill('100');
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect.poll(calls).toBeGreaterThan(before);
+  expect(profiles.at(-1).maxSpeedKmh).toBe(100);
+  await expect(page.locator('#route-note')).toContainText('speed ceiling 100');
+  await page.reload(); await page.locator('#trip-settings').click();
+  await expect(page.locator('#camper-speed')).toHaveValue('100');
+  await expect(page.locator('#camper-length')).toHaveValue('7.48');
+  await page.locator('#camper-routing').uncheck();
+  await expect(page.locator('#camper-fields')).toBeHidden();
+  await page.locator('#trip-form').getByRole('button',{name:'Save trip',exact:true}).click();
+  await expect.poll(()=>profiles.at(-1)).toBe(null);
+  await expect(page.locator('#route-note')).toContainText('standard car');
+  await page.reload(); await page.locator('#trip-settings').click();
+  await expect(page.locator('#camper-routing')).not.toBeChecked();
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#camper-routing').check();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({path:'../../TestResults/camper-settings-mobile.png',fullPage:true});
+});

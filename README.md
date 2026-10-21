@@ -1,6 +1,6 @@
 # Roam — Roadtrip Planner
 
-A self-hosted roadtrip planner built with **ASP.NET Core / .NET 10**, a responsive JavaScript interface and Leaflet maps. Plan several trips, change the route freely, and discover campings or camper/caravan sites near each stop. No account or paid API key required.
+A self-hosted roadtrip planner built with **ASP.NET Core / .NET 10**, a responsive JavaScript interface and Leaflet maps. Plan several trips, change the route freely, and discover campings or camper/caravan sites near each stop. Standard car routes and campsite discovery work without an API key. Optional TomTom camper routing requires your own TomTom API key.
 
 ## Run with Docker
 
@@ -38,10 +38,36 @@ The runtime uses the non-root `app` user. For bind mounts instead of named volum
 - Click a leg’s distance or its route line to highlight that leg while keeping the complete route in view. All other legs remain fully visible; the map shows its endpoints, kilometres and driving time. Clear the highlight or choose Fit all stops to restore the full route.
 - Routing permits turns at stops (`continue_straight=false`), including before the return leg. OSRM optimises driving time, not minimum kilometres; a longer motorway route may be preferred.
 - The map draws the final leg to your finish in coral dashes, so it remains visible over an outward route on the same road. Round trips show a shared S/F marker and include the return distance in the total.
-- Road routes update automatically after changing endpoints or stops. Each leg shows its driving distance in kilometres and estimated driving time; the overview shows the total. Use **Update route** to retry or refresh. These are car estimates between your pinned places, not campsite entrances; always verify camper dimensions, road restrictions, ferries and traffic yourself.
+- Road routes update automatically after changing endpoints or stops. Each leg shows its driving distance in kilometres and estimated driving time; the overview shows the total. Use **Update route** to retry or refresh. These are driving estimates between your pinned places, not campsite entrances; always verify camper dimensions, road restrictions, ferries and traffic yourself.
 - Choose **Add a stop** on any leg (or click its route line). Add a halfway point following the road geometry, search for an intermediate place, or click the map. New travel stops start at zero nights; choose a camping or change nights to make an overnight stay. You can start with major highlights and split long drives later.
 - Use **Save changes** (or Ctrl/Cmd+S). The app warns before leaving unsaved work; a version check prevents silently overwriting another tab's edits. On a conflict, export your edits if needed, then reload to get the latest version.
 - Trip settings let you rename, change start/end dates, duplicate, export or delete a trip. Importing an export creates a separate trip.
+
+## TomTom camper routing
+
+New trips default to a private camper profile: **7.48 m long, 2.30 m wide, 2.98 m high, 3,500 kg and a 120 km/h personal speed ceiling**. These are editable under **Trip settings → Route settings** and saved per trip, including duplicate/import/export. Existing trips remain standard car trips until camper routing is enabled explicitly.
+
+1. Create a TomTom developer account and a key with Routing API access. Check the current [TomTom pricing and account limits](https://docs.tomtom.com/pricing).
+2. Add these settings to a local `.env` file beside `compose.yaml` (or copy `.env.example` if you do not already have one):
+
+```dotenv
+TOMTOM_API_KEY=your-own-key
+TOMTOM_MONTHLY_REQUEST_LIMIT=1000
+```
+
+3. Apply with `docker compose up --build -d`. Open Trip settings to check key availability and local request usage. The key is never returned to the browser or stored in trip JSON. `.env` is git-ignored; keep it private. For direct .NET/image runs use `TomTom__ApiKey` and `TomTom__MonthlyRequestLimit` environment variables instead. Compose supplies these automatically from `.env`.
+
+The dedicated TomTom client sends dimensions, maximum weight, `vehicleMaxSpeed`, `travelMode=car` and `vehicleCommercial=false` for this **private motorhome up to 3,500 kg** profile. This avoids blindly applying a heavy/commercial truck profile. Heavier motorhomes are rejected rather than silently using this profile. Width defaults to the 2,299 mm published in [Adria's 2019 brochure](https://lp.adria.co.uk/pdf/motorhome_brochure_pricelist.pdf), rounded to 2.30 m; confirm mirror width and actual fitted roof equipment yourself.
+
+TomTom's fastest route uses the speed ceiling during route calculation and returns its own driving times. The ceiling does not override lower road/vehicle limits or make slow roads travel at their posted maximum. There is no blanket percentage added to car duration. Routes use `traffic=false`: historic road-speed assumptions remain, live traffic is excluded, and no future departure time is claimed for a multi-day trip. Breaks are excluded. Restriction coverage depends on the provider's map data; the app is a planning aid, not a guarantee of camper access.
+
+Requests preserve all stops in order, include the final return leg, and avoid unpaved roads where possible. Every returned leg carries its own geometry, time, kilometres and road midpoint. Changing dimensions or speed invalidates the route. Camper routes never silently fall back to OSRM if the key is missing, a provider fails or quota runs out. Uncheck camper routing explicitly to use a standard OSRM car route; its label states that camper restrictions are not applied.
+
+**Local request limit:** default 1,000 outgoing attempts per UTC calendar month, configurable from 0 to 20,000 (0 disables outgoing requests). Attempts, including failures/timeouts, are reserved before sending and persisted atomically under `/data/routing-usage/tomtom.json`. Restarting/rebuilding retains the count; a new UTC month resets it. A corrupt ledger fails closed. Do not delete the usage file to bypass the cap. This is a local guard for this single running app/data volume, not an account-wide billing guarantee: other apps using your key and TomTom's actual plan/charging rules are outside its scope.
+
+Identical routes/profiles are cached in memory for six hours; concurrent identical requests share one outbound attempt. Cache hits consume no new request and still work after the local limit is reached. Profile changes create a distinct cache entry. Failed responses are not cached, there are no automatic retries or redirects, and HTTP request logging is disabled for the TomTom client to avoid logging the API key in its URL.
+
+TomTom tests use documented-response fixtures: parameters, return geometry, profile changes, concurrent caching, quota persistence/month rollover, sanitised failures, cancellation, missing configuration and backward compatibility. No live TomTom request was verified without a user-supplied key.
 
 ## Local development
 
@@ -59,7 +85,7 @@ dotnet build RoadtripPlanner.slnx -c Release
 dotnet test RoadtripPlanner.slnx -c Release
 ```
 
-The 38 backend tests cover trip CRUD, multiple trips, endpoint persistence, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, optional date persistence and date range validation, cross-origin writes, geocoding, campsite provider failover/cache, Park4Night parsing/category filtering/radius handling, conservative duplicate merging, metadata persistence, per-leg routing and road midpoints. Ten Node tests cover endpoint order, intermediate stop insertion, route invalidation and duration formatting. Six Playwright browser flows cover planning, campsite selection, persistence, responsive layout, search errors, source filters, and saved Park4Night selections. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, runs the browser flows, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
+The 50 backend tests cover trip CRUD, multiple trips, endpoint persistence, persisted stop order/nights/campsites across application restarts, concurrent edit conflicts, optional date persistence and date range validation, cross-origin writes, geocoding, campsite provider failover/cache, Park4Night parsing/category filtering/radius handling, conservative duplicate merging, metadata persistence, per-leg routing and road midpoints. Eleven Node tests cover endpoint order, intermediate stop insertion, route invalidation and duration formatting. Seven Playwright browser flows cover planning, campsite selection, persistence, responsive layout, search errors, source filters, and saved Park4Night selections. Provider tests use fixtures; they do not depend on live public services. GitHub Actions builds and tests every push/PR, runs the browser flows, builds the Docker image, and smoke-tests HTTP access and persistence through a container restart.
 
 ```bash
 node --test tests/frontend/*.test.mjs

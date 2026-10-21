@@ -1,4 +1,4 @@
-import {routeNodes, routeSignature, insertionIndex, formatDriving, campsiteSources, campsiteType, matchesCampsite} from './planner.mjs';
+import {routeNodes, routeSignature, insertionIndex, formatDriving, campsiteSources, campsiteType, matchesCampsite, defaultCamperProfile} from './planner.mjs';
 const $ = id => document.getElementById(id);
 const state = { trips: [], trip: null, selected: null, selectedLeg: null, dirty: false, busy: false, camps: [], campStop: null, route: null, routeKey: null, routing: false, routeError: null, campWarnings: [], campError: null, campLoading: false, placeTarget: null, insertLeg: null, mapInsert: null };
 let map, stopLayer, campLayer, lineLayer, toastTimer, dragId, placeRequest = 0, campRequest = 0, routeTimer, routeRequest = 0, routeController, queuedRouteKey;
@@ -78,7 +78,7 @@ function renderSummary() {
   $('calculate-route').textContent = state.routing ? 'Routing…' : 'Update route';
   $('summary-distance').textContent = route ? `${Math.round(route.distanceKm).toLocaleString()} km` : state.routing ? 'Calculating…' : count < 2 ? 'Your route awaits' : state.routeError ? 'Route unavailable' : 'Ready to route';
   $('summary-duration').textContent = route ? `${formatDriving(route.durationHours)} driving · ${route.legs.length} legs` : count < 2 ? 'Set start, finish or highlights' : state.routeError ? 'Tap Update route to retry' : 'Road distances between every stop';
-  $('route-note').textContent = route ? 'Driving distances follow the road between your pinned locations. Routes favour driving time rather than the fewest kilometres; estimates exclude breaks and traffic. Check camper dimensions, ferries and road restrictions.' : state.routeError ?? 'Routes update automatically as you add or move places. Dotted lines are only a preview, not driving distances.';
+  $('route-note').textContent = route ? `${t.camper ? `TomTom camper route · speed ceiling ${t.camper.maxSpeedKmh} km/h. Dimensions and weight applied where restriction data is available.` : 'OSRM standard car route · camper dimensions and speed ceiling are not applied.'} Routes favour driving time; estimates exclude breaks and live traffic. Check current road signs and restrictions.` : state.routeError ?? 'Routes update automatically as you add or move places. Dotted lines are only a preview, not driving distances.';
 }
 function legMarkup(index) {
   const nodes = routeNodes(state.trip), route = validRoute(), leg = route?.legs[index];
@@ -209,9 +209,25 @@ function scheduleRoute() {
   state.selectedLeg = null;
   clearTimeout(routeTimer); routeController?.abort(); routeRequest++;
   state.routing = false; state.routeError = null; queuedRouteKey = key;
-  if (routeNodes(state.trip).length < 2) { queuedRouteKey = null; renderSummary(); return; }
-  state.routing = true; renderSummary(); renderLegs();
+  if (routeNodes(state.trip).length < 2) { queuedRouteKey = null; renderSummary(); renderMap(); return; }
+  state.routing = true; renderSummary(); renderLegs(); renderMap();
   routeTimer = setTimeout(() => calculateRoute(false),700);
+}
+function syncCamperFields() {
+  const enabled = $('camper-routing').checked;
+  $('camper-fields').hidden = !enabled;
+  $('camper-fields').querySelectorAll('input').forEach(input => input.disabled = !enabled);
+}
+function readCamperProfile() {
+  if (!$('camper-routing').checked) return null;
+  return {lengthM:Number($('camper-length').value),widthM:Number($('camper-width').value),heightM:Number($('camper-height').value),weightKg:Number($('camper-weight').value),maxSpeedKmh:Number($('camper-speed').value)};
+}
+async function refreshRoutingStatus() {
+  $('routing-status').textContent = 'Checking TomTom configuration…';
+  try {
+    const status = await api('/api/routing/status');
+    $('routing-status').textContent = `${status.tomTomConfigured ? 'TomTom ready' : 'TomTom API key missing — configure TOMTOM_API_KEY in your local .env file'}. Local requests: ${status.usage.requests} / ${status.usage.limit} this UTC month.`;
+  } catch { $('routing-status').textContent = 'TomTom configuration status unavailable. Check your local configuration.'; }
 }
 function openTripDialog(edit = false) {
   if (state.busy) return;
@@ -220,6 +236,11 @@ function openTripDialog(edit = false) {
   $('trip-name').value = edit ? state.trip.name : ''; $('trip-date').value = edit ? state.trip.startDate ?? '' : '';
   $('trip-end-date').value = edit ? state.trip.endDate ?? '' : '';
   syncTripDates();
+  const camper = edit ? state.trip.camper : defaultCamperProfile();
+  $('camper-routing').checked = !!camper;
+  const profile = camper ?? defaultCamperProfile();
+  for (const [field,key] of [['length','lengthM'],['width','widthM'],['height','heightM'],['weight','weightKg'],['speed','maxSpeedKmh']]) $('camper-'+field).value = profile[key];
+  syncCamperFields(); refreshRoutingStatus();
   for (const id of ['delete-trip','duplicate-trip','export-trip']) $(id).hidden = !edit;
   $('trip-dialog').showModal();
 }
@@ -327,7 +348,7 @@ async function calculateRoute(manual = true) {
   const token = ++routeRequest, key = pointKey(), tripId = state.trip.id;
   queuedRouteKey = key; state.routing = true; state.routeError = null; renderSummary(); renderLegs();
   try {
-    const result = await api('/api/route',{method:'POST',signal:routeController.signal,body:JSON.stringify({points:nodes.map(s => ({latitude:s.latitude,longitude:s.longitude}))})});
+    const result = await api('/api/route',{method:'POST',signal:routeController.signal,body:JSON.stringify({points:nodes.map(s => ({latitude:s.latitude,longitude:s.longitude})),camper:state.trip.camper ?? null})});
     if (token !== routeRequest || state.trip?.id !== tripId || pointKey() !== key) return;
     state.route = result; state.routeKey = key; renderMap(); renderLegs();
   } catch (e) {
@@ -371,18 +392,19 @@ function syncTripDates() {
   $('trip-end-date').min = $('trip-date').value;
   $('trip-end-date').setCustomValidity($('trip-date').value && $('trip-end-date').value && $('trip-end-date').value < $('trip-date').value ? 'End date must be on or after the start date.' : '');
 }
+$('camper-routing').addEventListener('change', syncCamperFields);
 for (const id of ['trip-date','trip-end-date']) $(id).addEventListener('input', syncTripDates);
 $('trip-form').addEventListener('submit', async e => {
   e.preventDefault();
   syncTripDates();
   if (!$('trip-form').reportValidity()) return;
   if ($('trip-form').dataset.mode === 'edit') {
-    state.trip.name = $('trip-name').value.trim(); state.trip.startDate = $('trip-date').value || null; state.trip.endDate = $('trip-end-date').value || null;
+    state.trip.name = $('trip-name').value.trim(); state.trip.startDate = $('trip-date').value || null; state.trip.endDate = $('trip-end-date').value || null; state.trip.camper = readCamperProfile();
     dirty(); render(); $('trip-dialog').close(); await saveTrip();
   } else {
     if (!canLeave()) return;
     await busy(async () => {
-      const trip = await api('/api/trips',{method:'POST',body:JSON.stringify({name:$('trip-name').value.trim(),startDate:$('trip-date').value || null,endDate:$('trip-end-date').value || null,notes:'',stops:[]})});
+      const trip = await api('/api/trips',{method:'POST',body:JSON.stringify({name:$('trip-name').value.trim(),startDate:$('trip-date').value || null,endDate:$('trip-end-date').value || null,camper:readCamperProfile(),notes:'',stops:[]})});
       state.trips.unshift(trip); setTrip(trip); $('trip-dialog').close(); notify('A new adventure, ready to plan.');
     });
   }

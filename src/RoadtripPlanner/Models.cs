@@ -7,6 +7,7 @@ public sealed record Trip
     public string Name { get; init; } = "";
     public DateOnly? StartDate { get; init; }
     public DateOnly? EndDate { get; init; }
+    public CamperProfile? Camper { get; init; }
     public Place? StartLocation { get; init; }
     public Place? EndLocation { get; init; }
     public string Notes { get; init; } = "";
@@ -32,9 +33,17 @@ public sealed record Campsite(string Id, string Name, double Latitude, double Lo
     int? ReviewCount = null, string? Category = null, CampsiteSourceLink[]? OtherSources = null);
 public sealed record CampsiteSourceLink(string Name,string Url);
 public sealed record CampsiteSearchResult(Campsite[] Campsites,string[] Warnings);
-public sealed record RouteRequest(List<RoutePoint> Points);
+public sealed record CamperProfile
+{
+    public double LengthM { get; init; } = 7.48;
+    public double WidthM { get; init; } = 2.30;
+    public double HeightM { get; init; } = 2.98;
+    public int WeightKg { get; init; } = 3500;
+    public int MaxSpeedKmh { get; init; } = 120;
+}
+public sealed record RouteRequest(List<RoutePoint> Points, CamperProfile? Camper = null);
 public sealed record RoutePoint(double Latitude, double Longitude);
-public sealed record RoadRoute(double DistanceKm, double DurationHours, double[][] Coordinates, RoadLeg[] Legs);
+public sealed record RoadRoute(double DistanceKm, double DurationHours, double[][] Coordinates, RoadLeg[] Legs, string Provider = "OSRM");
 public sealed record RoadLeg(double DistanceKm, double DurationHours, double[][] Coordinates, RoutePoint Midpoint);
 
 public static class TripValidation
@@ -45,6 +54,7 @@ public static class TripValidation
             return "Give your trip a name of 1–120 characters.";
         if (trip.StartDate.HasValue && trip.EndDate.HasValue && trip.EndDate < trip.StartDate)
             return "End date must be on or after the start date.";
+        if (ValidateCamper(trip.Camper) is { } camperError) return camperError;
         foreach (var endpoint in new[] { trip.StartLocation, trip.EndLocation })
             if (endpoint is not null && (string.IsNullOrWhiteSpace(endpoint.Name) || endpoint.Name.Length > 200
                 || (endpoint.Description?.Length ?? 0) > 1000 || !ValidCoordinates(endpoint.Latitude, endpoint.Longitude)))
@@ -77,6 +87,13 @@ public static class TripValidation
         }
         return null;
     }
+
+    public static string? ValidateCamper(CamperProfile? camper) => camper is not null &&
+        (!double.IsFinite(camper.LengthM) || camper.LengthM is < 2 or > 15
+        || !double.IsFinite(camper.WidthM) || camper.WidthM is < 1 or > 3
+        || !double.IsFinite(camper.HeightM) || camper.HeightM is < 1 or > 4.5
+        || camper.WeightKg is < 500 or > 3500 || camper.MaxSpeedKmh is < 30 or > 130)
+        ? "Use valid camper dimensions, a weight of 500–3,500 kg and a speed limit of 30–130 km/h. Heavy motorhomes above 3,500 kg are not supported by this profile." : null;
 
     public static bool ValidCoordinates(double latitude, double longitude) =>
         double.IsFinite(latitude) && double.IsFinite(longitude) && latitude is >= -90 and <= 90 && longitude is >= -180 and <= 180;

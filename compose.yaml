@@ -9,5 +9,7 @@ services:
     restart: unless-stopped
     environment:
       Data__Directory: /data
+      TomTom__ApiKey: ${TOMTOM_API_KEY:-}
+      TomTom__MonthlyRequestLimit: ${TOMTOM_MONTHLY_REQUEST_LIMIT:-1000}
 volumes:
   trips:
